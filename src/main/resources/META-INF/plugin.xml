@@ -1,0 +1,38 @@
+<!-- MypiPlugin 插件声明 -->
+<idea-plugin>
+    <id>com.mypi.plugin</id>
+    <name>MypiPlugin</name>
+    <vendor>mypi</vendor>
+    <description><![CDATA[
+        Pi coding agent integration for IntelliJ IDEA.<br/>
+        选中代码 → 快捷键 → 作为上下文发送给 Pi,流式查看回复。
+    ]]></description>
+
+    <!-- 只依赖基础平台模块,不强绑定 Java/Ultimate -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- 右侧 Pi 聊天面板 -->
+        <toolWindow id="Pi"
+                    anchor="right"
+                    icon="AllIcons.Toolwindows.ToolWindowProject"
+                    factoryClass="com.mypi.plugin.PiToolWindowFactory"/>
+        <!-- Settings → Tools → Pi:配置 pi 可执行路径 -->
+        <projectConfigurable groupId="tools"
+                             displayName="Pi"
+                             id="mypi.piConfigurable"
+                             instance="com.mypi.plugin.PiConfigurable"/>
+    </extensions>
+
+    <actions>
+        <!-- 选区 → Pi 的快捷键动作 -->
+        <action id="Mypi.SendSelection"
+                class="com.mypi.plugin.SendSelectionAction"
+                text="Send Selection to Pi"
+                description="将当前选区作为上下文发送给 Pi">
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt P"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

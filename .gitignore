@@ -1,0 +1,23 @@
+# ===== Gradle 构建缓存与产物 =====
+.gradle/
+build/
+
+# ===== IntelliJ Platform Gradle Plugin(下载的目标 IDE 与依赖缓存) =====
+.intellijPlatform/
+
+# ===== IntelliJ IDEA 工程文件(IDE 本地配置,不入库) =====
+.idea/
+out/
+*.iml
+*.iws
+*.ipr
+
+# ===== Kotlin =====
+.kotlin/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== 运行产物(pi-probe.mjs 抓取的协议夹具,本地生成不入库) =====
+pi-trace.jsonl
