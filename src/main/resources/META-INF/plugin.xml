@@ -17,7 +17,7 @@
         <!-- 右侧 Pi 聊天面板 -->
         <toolWindow id="Pi"
                     anchor="right"
-                    icon="AllIcons.Toolwindows.ToolWindowProject"
+                    icon="/icons/piToolWindow.svg"
                     factoryClass="com.mypi.plugin.PiToolWindowFactory"/>
         <!-- Settings → Tools → Pi:配置 pi 可执行路径 -->
         <projectConfigurable groupId="tools"
