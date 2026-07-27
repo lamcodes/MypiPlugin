@@ -10,6 +10,8 @@
 
     <!-- 只依赖基础平台模块,不强绑定 Java/Ultimate -->
     <depends>com.intellij.modules.platform</depends>
+    <!-- 依赖内置终端插件(Reworked Terminal,跑 pi + 注入选区) -->
+    <depends>org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <!-- 右侧 Pi 聊天面板 -->
@@ -30,7 +32,9 @@
                 class="com.mypi.plugin.SendSelectionAction"
                 text="Send Selection to Pi"
                 description="将当前选区作为上下文发送给 Pi">
-            <keyboard-shortcut keymap="$default" first-keystroke="control alt P"/>
+            <!-- Ctrl+Alt+字母会被中文输入法拦截(打 p),Ctrl+Shift 又是输入法切换;
+                 改 Ctrl+Alt+; 避开 Shift 与 IME 常用组合,分号无 IME 冲突 -->
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt SEMICOLON"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>

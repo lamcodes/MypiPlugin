@@ -18,7 +18,7 @@ import javax.swing.JPanel
  */
 class PiConfigurable(private val project: Project) : Configurable {
 
-    private val pathField = JBTextField()
+    internal val pathField = JBTextField()
 
     override fun getDisplayName(): String = "Pi"
 
@@ -35,9 +35,11 @@ class PiConfigurable(private val project: Project) : Configurable {
         return pathField.text != PiSettings.getInstance(project).piPath
     }
 
-    /** 应用:trim 后写回 PiSettings;空串等价于未配置。 */
+    /** 应用:trim 后写回 PiSettings,并同步 UI 文本(使 apply 后 isModified 归零,"应用"按钮正确熄灭);空串等价未配置。 */
     override fun apply() {
-        PiSettings.getInstance(project).piPath = pathField.text.trim()
+        val trimmed = pathField.text.trim()
+        PiSettings.getInstance(project).piPath = trimmed
+        pathField.text = trimmed
     }
 
     /** 重置:把持久化值载入文本框(进入配置页时调用)。 */

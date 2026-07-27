@@ -7,40 +7,45 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.ui.Messages
 
 /**
- * 快捷键动作:把当前选区(文件名 + 起止行号 + 选中文本)作为上下文发给 Pi。
- * 默认快捷键 Ctrl+Alt+P(见 plugin.xml)。
+ * 快捷键动作(Ctrl+Alt+P):把当前选区或光标定位注入到 pi 终端(只填不发送)。
+ *
+ * 上下文判断(决策#7):
+ *  - 有选区 → [SelectionContextBuilder.build] 产出"文件名:起-止 + 代码围栏"。
+ *  - 无选区 → [SelectionContextBuilder.buildFileLocator] 产出"文件名:光标行号"。
+ *
+ * 注入经 [PiTerminalService.inject];若 pi 终端未开,弹框提示去点启动按钮(决策#10)。
  */
 class SendSelectionAction : AnAction() {
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val editor = e.getData(CommonDataKeys.EDITOR) ?: return
-
-        // 抓选区
-        val selModel = editor.selectionModel
-        val selectedText = selModel.selectedText
-        if (selectedText.isNullOrEmpty()) {
-            Messages.showInfoMessage("请先选中一段代码。", "Pi")
-            return
-        }
-
-        // 文件名 + 起止行号(0-based → 1-based 展示)
         val file = e.getData(CommonDataKeys.VIRTUAL_FILE)
         val fileName = file?.name ?: "未知文件"
         val doc = editor.document
-        val startLine = doc.getLineNumber(selModel.selectionStart) + 1
-        val endLine = doc.getLineNumber(selModel.selectionEnd) + 1
+        val selModel = editor.selectionModel
+        val selectedText = selModel.selectedText
 
-        // 构造 prompt 并经 project service 发给 Pi
-        // (sendPrompt 内部会在 IO 协程自动确保 pi 已启动,不在 EDT 调 start)
-        val prompt = SelectionContextBuilder.build(fileName, selectedText, startLine, endLine)
-        project.service<PiService>().rpc.sendPrompt(prompt)
+        // 有选区发代码块;无选区发"文件名:光标行号"(0-based → 1-based 展示)
+        val text = if (!selectedText.isNullOrEmpty()) {
+            val startLine = doc.getLineNumber(selModel.selectionStart) + 1
+            val endLine = doc.getLineNumber(selModel.selectionEnd) + 1
+            SelectionContextBuilder.build(fileName, startLine, endLine)
+        } else {
+            val caretLine = doc.getLineNumber(editor.caretModel.offset) + 1
+            SelectionContextBuilder.buildFileLocator(fileName, caretLine)
+        }
+
+        // 注入到 pi 终端:据返回信号决定是否弹框提示
+        when (val err = project.service<PiTerminalService>().inject(text)) {
+            null -> Unit // 注入成功(只填不发送,用户补问题再回车)
+            "未开" -> Messages.showInfoMessage("Pi 终端未开启,请点右侧 Pi 面板的启动按钮", "Pi")
+            else -> Messages.showInfoMessage(err, "Pi") // 注入失败等异常信号
+        }
     }
 
     override fun update(e: AnActionEvent) {
-        // 必须轻量:只看编辑器是否存在 + 选区是否非空,严禁读 document 等重活,避免拖慢 UI 刷新
-        val editor = e.getData(CommonDataKeys.EDITOR)
-        val hasSelection = !editor?.selectionModel?.selectedText.isNullOrEmpty()
-        e.presentation.isEnabledAndVisible = editor != null && hasSelection
+        // 始终启用(决策#7):无选区也允许,发"文件名:行号"定位;仅需有编辑器
+        e.presentation.isEnabledAndVisible = e.getData(CommonDataKeys.EDITOR) != null
     }
 }
