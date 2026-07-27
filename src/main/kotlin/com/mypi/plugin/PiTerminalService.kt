@@ -17,6 +17,19 @@ import com.intellij.ui.content.ContentManagerListener
 import java.io.File
 
 /**
+ * inject 结果的密封类型:让调用方(SendSelectionAction)用 when 穷举分支处理,
+ * 取代原先的字符串魔法值(null/"未开"/"注入失败:..."),避免调用方漏判或写错信号串。
+ */
+sealed interface InjectResult {
+    /** 注入成功 */
+    data object Success : InjectResult
+    /** pi 终端未开启,由调用方提示用户去点启动按钮 */
+    data object TerminalNotOpen : InjectResult
+    /** 注入过程异常,携带错误信息 */
+    data class Failed(val message: String) : InjectResult
+}
+
+/**
  * Project 级服务:管理"插件专属 pi 终端"——用 Reworked Terminal 跑 pi,并提供选区注入入口。
  *
  * 职责:
@@ -41,6 +54,9 @@ class PiTerminalService(val project: Project) : Disposable {
             object : ToolWindowManagerListener {
                 override fun toolWindowShown(tw: ToolWindow) {
                     if (tw.id != "Pi") return
+                    // invokeLater 不可省:toolWindowShown 在平台"显示工具窗"流程中同步触发,
+                    // 此处若直接 openPi(建终端 tab + 激活)会与显示流程重入/抢焦点;
+                    // 推迟到当前 EDT 事件结束后执行,确保 service init 已完成、显示流程已收尾。
                     ApplicationManager.getApplication().invokeLater {
                         val err = openPi()
                         if (err.isEmpty()) tw.hide(null)
@@ -104,18 +120,18 @@ class PiTerminalService(val project: Project) : Disposable {
     /**
      * 向 pi 终端注入文本——只填不发送(用户补问题再回车)。
      *
-     * @return null 表示成功;非空表示错误信号("未开"由调用方提示"点启动按钮";其余为注入异常)
+     * @return [InjectResult];调用方按分支决定聚焦或弹框提示
      */
-    fun inject(text: String): String? {
-        val view = piView ?: return "未开"
+    fun inject(text: String): InjectResult {
+        val view = piView ?: return InjectResult.TerminalNotOpen
         return runCatching {
             view.createSendTextBuilder()
                 .useBracketedPasteMode()
                 .sendEndKeyBeforeText()
                 .send(text)
-            null
+            InjectResult.Success
         }.getOrElse { e ->
-            "注入失败:${e.message ?: e.toString()}"
+            InjectResult.Failed("注入失败:${e.message ?: e.toString()}")
         }
     }
 

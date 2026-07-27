@@ -7,7 +7,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.ui.Messages
 
 /**
- * 快捷键动作(Ctrl+Alt+P):把当前选区或光标定位注入到 pi 终端(只填不发送)。
+ * 快捷键动作(Ctrl+Alt+;):把当前选区或光标定位注入到 pi 终端(只填不发送)。
  *
  * 上下文判断(决策#7):
  *  - 有选区 → [SelectionContextBuilder.build] 产出"文件名:起-止 + 代码围栏"。
@@ -36,12 +36,12 @@ class SendSelectionAction : AnAction() {
             SelectionContextBuilder.buildFileLocator(fileName, caretLine)
         }
 
-        // 注入到 pi 终端:据返回信号决定是否弹框提示
+        // 注入到 pi 终端:按 InjectResult 分支决定聚焦或弹框提示(sealed 类型,编译期穷举)
         val service = project.service<PiTerminalService>()
-        when (val err = service.inject(text)) {
-            null -> service.focusAndActivatePi() // 注入成功,焦点切到 pi 终端(用户直接补问题+回车)
-            "未开" -> Messages.showInfoMessage("Pi 终端未开启,请点右侧 Pi 面板的启动按钮", "Pi")
-            else -> Messages.showInfoMessage(err, "Pi") // 注入失败等异常信号
+        when (val result = service.inject(text)) {
+            InjectResult.Success -> service.focusAndActivatePi() // 注入成功,焦点切到 pi 终端(用户直接补问题+回车)
+            InjectResult.TerminalNotOpen -> Messages.showInfoMessage("Pi 终端未开启,请点右侧 Pi 面板的启动按钮", "Pi")
+            is InjectResult.Failed -> Messages.showInfoMessage(result.message, "Pi") // 注入失败等异常
         }
     }
 
