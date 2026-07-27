@@ -18,6 +18,3 @@ out/
 # ===== OS =====
 .DS_Store
 Thumbs.db
-
-# ===== 运行产物(pi-probe.mjs 抓取的协议夹具,本地生成不入库) =====
-pi-trace.jsonl
