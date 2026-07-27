@@ -72,3 +72,9 @@ kotlin {
 tasks.test {
     useJUnitPlatform()
 }
+
+// buildSearchableOptions 在中文 Locale 下失败("Locale must be default"),且只影响 Settings 搜索索引(非插件功能);
+// 禁用后 IDE 双击 buildPlugin 或命令行 buildPlugin 都不用再加 -x buildSearchableOptions。
+tasks.matching { it.name == "buildSearchableOptions" }.configureEach {
+    enabled = false
+}
