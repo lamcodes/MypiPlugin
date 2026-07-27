@@ -1,10 +1,13 @@
 package com.mypi.plugin
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
@@ -16,17 +19,36 @@ import java.io.File
 /**
  * Project 级服务:管理"插件专属 pi 终端"——用 Reworked Terminal 跑 pi,并提供选区注入入口。
  *
- * 取代旧 PiService+PiRpcProcess 的自建 RPC 方案(协议脆弱 + 版本断代)。职责:
+ * 职责:
+ *  - init 监听 Pi 工具窗显示:每次点 Pi 图标 → [openPi](pi 已开则聚焦终端,未开则启动新 pi),
+ *    成功后隐藏右侧 Pi 面板。解决哥反馈的"手动退出 pi 后再点图标无法重启"。
  *  - [openPi]:预检 pi 可执行 → [TerminalToolWindowTabsManager] 建标题 "Pi" 的 tab → 持有 [TerminalView]
- *    + [activateTerminal] 激活底部 Terminal 工具窗(让用户看到 pi 终端)。
+ *    + [activateTerminal] 激活底部 Terminal 工具窗。
  *  - [inject]:向 pi 终端"只填不发送"文本(createSendTextBuilder,不调 shouldExecute)。
- *  - 监听 tab 关闭([ContentManagerListener],Reworked 无 tabClosed 回调)清引用 + 通知面板。
+ *  - 监听 tab 关闭清引用 + 通知面板。
  *
  * 依赖的 Reworked Terminal API 为 @ApiStatus.Experimental(2026.2 仍未 graduated),
  * 调用处用 runCatching 包裹降级,失败时通过 [onStatus] 回调提示,不让插件崩溃。
  */
 @Service(Service.Level.PROJECT)
 class PiTerminalService(val project: Project) : Disposable {
+
+    init {
+        // 监听 Pi 工具窗"被显示"(每次点 Pi 图标都触发,不止首次)。
+        // openPi 内部:pi 已开→聚焦终端;未开→启动新 pi。成功才隐藏 Pi 面板(失败保留显示错误)。
+        project.messageBus.connect(this).subscribe(
+            ToolWindowManagerListener.TOPIC,
+            object : ToolWindowManagerListener {
+                override fun toolWindowShown(tw: ToolWindow) {
+                    if (tw.id != "Pi") return
+                    ApplicationManager.getApplication().invokeLater {
+                        val err = openPi()
+                        if (err.isEmpty()) tw.hide(null)
+                    }
+                }
+            }
+        )
+    }
 
     /** 当前 pi 终端的 tab(为空表示未启动或已被关闭)。 */
     @Volatile private var piTab: TerminalToolWindowTab? = null
@@ -44,7 +66,7 @@ class PiTerminalService(val project: Project) : Disposable {
     fun hasOpen(): Boolean = piView != null
 
     /**
-     * 启动 pi 终端。单一会话:已开则聚焦 + 激活终端,不重开。
+     * 启动 pi 终端。单一会话:已开则聚焦 + 激活终端,不重开;未开则预检后建新 tab。
      * 必须在 EDT 调用(createTabBuilder/createTab 标注 @RequiresEdt)。
      *
      * @return 错误信息;空串表示成功
@@ -63,14 +85,14 @@ class PiTerminalService(val project: Project) : Disposable {
         return runCatching {
             val manager = TerminalToolWindowTabsManager.getInstance(project)
             val tab = manager.createTabBuilder()
-                .tabName("Pi")   // 弱标识:专属 pi 终端 tab 标题
+                .tabName("Pi")
                 .workingDirectory(project.basePath ?: System.getProperty("user.dir"))
-                .shellCommand(listOf(piExe))   // 直接跑 pi 进 REPL;Windows .cmd/.exe 由 builder 自行处理
+                .shellCommand(listOf(piExe))
                 .createTab()
             piTab = tab
             piView = tab.view
             registerCloseListener(tab.content)
-            activateTerminal() // 激活底部 Terminal 工具窗,让用户看到 pi 终端
+            activateTerminal()
             notify("已就绪")
             ""
         }.getOrElse { e ->
@@ -89,9 +111,9 @@ class PiTerminalService(val project: Project) : Disposable {
         val view = piView ?: return "未开"
         return runCatching {
             view.createSendTextBuilder()
-                .useBracketedPasteMode()   // 多行粘贴走 bracketed paste(mode 2004)
-                .sendEndKeyBeforeText()    // 2026.2 新增:避免粘贴到行中间
-                .send(text)                // 不调 shouldExecute() = 只填不发送
+                .useBracketedPasteMode()
+                .sendEndKeyBeforeText()
+                .send(text)
             null
         }.getOrElse { e ->
             "注入失败:${e.message ?: e.toString()}"
@@ -107,7 +129,6 @@ class PiTerminalService(val project: Project) : Disposable {
 
     /**
      * 激活底部 Terminal 工具窗(显示并拉到前台),让用户看到 pi 终端。
-     * Pi tab 的选中由 createTab/focusPi 负责,这里只负责把 Terminal 工具窗拉到前台。
      */
     private fun activateTerminal() {
         val terminal = ToolWindowManager.getInstance(project).getToolWindow("Terminal") ?: return
@@ -117,8 +138,6 @@ class PiTerminalService(val project: Project) : Disposable {
     /**
      * 预检 pi 可执行:优先用 PiSettings 配的路径;空则扫 PATH。
      * Windows 优先 .exe,其次 .cmd/.bat;其它平台找 "pi"。
-     *
-     * @return 可执行的 pi 绝对路径,或 null(未找到)
      */
     private fun resolvePiExecutable(): String? {
         val configured = PiSettings.getInstance(project).piPath.trim()
@@ -138,7 +157,6 @@ class PiTerminalService(val project: Project) : Disposable {
 
     /**
      * 监听 Pi tab 关闭:用户关掉 pi 终端 tab 时清引用 + 通知面板"未启动"。
-     * Reworked 的 TerminalTabsManagerListener 没有 tabClosed 回调,关闭事件只能从 ContentManager 拿。
      */
     private fun registerCloseListener(content: Content) {
         val manager = content.manager ?: return
@@ -158,7 +176,6 @@ class PiTerminalService(val project: Project) : Disposable {
     }
 
     override fun dispose() {
-        // 项目关闭时关掉 pi tab(若有);closeTab 标 @RequiresEdt,runCatching 兜底防非 EDT 调用
         val tab = piTab
         piTab = null
         piView = null

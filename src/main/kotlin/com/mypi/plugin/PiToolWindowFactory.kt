@@ -12,34 +12,29 @@ import javax.swing.JPanel
 import javax.swing.SwingConstants
 
 /**
- * 右侧 Pi 工具窗工厂。决策更新(哥反馈):点 Pi 图标 = 直接启动 pi,不停留面板。
+ * 右侧 Pi 工具窗工厂。
  *
- * [createToolWindowContent] 先接好状态回调,再调 [PiTerminalService.openPi](启动 pi 终端 + 聚焦底部 Terminal);
- * 启动**成功**才隐藏右侧面板(让用户专注底部 pi 终端),**失败**则保留面板显示错误(如"未找到 pi")。
+ * createToolWindowContent 只建面板 Content(状态 Label 兜底);启动/聚焦 pi 的逻辑由
+ * [PiTerminalService] 的 init 监听 [com.intellij.openapi.wm.ToolWindowManagerListener]
+ * (Pi 工具窗显示事件)处理——这样**每次点 Pi 图标**都触发(不止首次):
+ * pi 已开→聚焦终端,未开→启动新 pi,成功后隐藏右侧 Pi 面板。
  *
- * 注:首次点图标触发 createToolWindowContent(自动 openPi);后续 show 复用 Content,不重复 openPi
- * (pi 已跑则聚焦终端,见 [PiTerminalService.openPi] 的"已开则聚焦"分支)。
+ * 决策更新(哥反馈):解决"手动退出 pi 后再点图标,只弹面板无法重启"的问题。
  */
 class PiToolWindowFactory : ToolWindowFactory {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val app = ApplicationManager.getApplication()
+        // 触发 PiTerminalService 创建 → init 注册 ToolWindow 显示监听(每次点图标都跑 openPi)
         val service = project.service<PiTerminalService>()
 
-        // 先建状态 Label + 接 onStatus(必须在 openPi 之前,否则 openPi 内 notify 时回调还是 null)
+        // 面板内容最小:状态 Label(启动中/已就绪/启动失败:...)兜底显示
         val statusLabel = JLabel("正在启动 pi...", SwingConstants.CENTER)
         service.onStatus = { msg -> app.invokeLater { statusLabel.text = msg } }
         val panel = JPanel(BorderLayout()).apply { add(statusLabel, BorderLayout.CENTER) }
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(panel, "", false)
         )
-
-        // 点图标 = 启动 pi(openPi 内激活并聚焦底部 Terminal 的 Pi tab)
-        val startErr = service.openPi()
-
-        // 成功才隐藏右侧面板(让用户专注底部 pi 终端);失败保留面板显示错误信息
-        app.invokeLater {
-            if (startErr.isEmpty()) toolWindow.hide(null)
-        }
+        // 启动/聚焦 pi 由 PiTerminalService 的 ToolWindowManagerListener 处理(每次点图标都触发)
     }
 }
