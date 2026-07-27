@@ -73,8 +73,7 @@ class PiTerminalService(val project: Project) : Disposable {
      */
     fun openPi(): String {
         if (piView != null) { // 单一会话:已开则聚焦 + 激活终端,不重复建
-            focusPi()
-            activateTerminal()
+            focusAndActivatePi()
             return ""
         }
         val piExe = resolvePiExecutable() ?: run {
@@ -128,11 +127,26 @@ class PiTerminalService(val project: Project) : Disposable {
     }
 
     /**
+     * 聚焦并激活 pi 终端:选中 Pi tab + 激活底部 Terminal 工具窗(把键盘焦点交给 pi 输入行)。
+     * 注入成功后由 SendSelectionAction 调用,让用户直接在 pi 终端补问题 + 回车,无需手动切焦点。
+     */
+    fun focusAndActivatePi() {
+        focusPi()
+        activateTerminal()
+    }
+
+    /**
      * 激活底部 Terminal 工具窗(显示并拉到前台),让用户看到 pi 终端。
      */
     private fun activateTerminal() {
         val terminal = ToolWindowManager.getInstance(project).getToolWindow("Terminal") ?: return
-        terminal.show(null)
+        // activate(回调,autoFocus=true) 而非 show:工具窗激活后聚焦 pi tab 内容组件,
+        // 让 pi 输入行接管键盘焦点(show 只显示不聚焦内容,哥反馈打字还在编辑区)。
+        terminal.activate {
+            // TerminalView.preferredFocusableComponent:终端为焦点场景设计的可聚焦组件(JediTerm 输入区)。
+            // content.component 是根组件,焦点遍历走不到输入框(哥反馈打字落到 tab 标题而非输入区)。
+            piView?.preferredFocusableComponent?.requestFocusInWindow()
+        }
     }
 
     /**

@@ -37,8 +37,9 @@ class SendSelectionAction : AnAction() {
         }
 
         // 注入到 pi 终端:据返回信号决定是否弹框提示
-        when (val err = project.service<PiTerminalService>().inject(text)) {
-            null -> Unit // 注入成功(只填不发送,用户补问题再回车)
+        val service = project.service<PiTerminalService>()
+        when (val err = service.inject(text)) {
+            null -> service.focusAndActivatePi() // 注入成功,焦点切到 pi 终端(用户直接补问题+回车)
             "未开" -> Messages.showInfoMessage("Pi 终端未开启,请点右侧 Pi 面板的启动按钮", "Pi")
             else -> Messages.showInfoMessage(err, "Pi") // 注入失败等异常信号
         }
