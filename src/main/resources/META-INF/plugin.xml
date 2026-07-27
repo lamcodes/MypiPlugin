@@ -4,8 +4,8 @@
     <name>MypiPlugin</name>
     <vendor>mypi</vendor>
     <description><![CDATA[
-        Pi coding agent integration for IntelliJ IDEA.<br/>
-        选中代码 → 快捷键 → 作为上下文发送给 Pi,流式查看回复。
+        在 IntelliJ 内置终端跑 Pi coding agent,一键把选区定位注入 pi。<br/>
+        选中代码 → Ctrl+Alt+; → 定位串(文件名:行号)填入 pi 终端(只填不发送),焦点自动切到 pi 输入行,补问题回车即可。复用 IDE 终端,无需自建面板。
     ]]></description>
 
     <!-- 只依赖基础平台模块,不强绑定 Java/Ultimate -->

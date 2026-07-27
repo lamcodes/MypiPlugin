@@ -57,7 +57,10 @@ intellijPlatform {
     pluginConfiguration {
         version = "0.1.0"
         ideaVersion {
-            sinceBuild = "253"    // 2025.3 起:跳过终端引擎断代期(Classic→Reworked),用 Reworked Terminal 新 API
+            // 代码硬依赖 2026.2 才稳定提供的 Reworked Terminal 新 API(PiTerminalService 里
+            // createSendTextBuilder / sendEndKeyBeforeText / TerminalToolWindowTabsManager 等 10 处调用);
+            // 低于 262 能装上但首次注入即 NoSuchMethodError,故 sinceBuild 收紧到 262 与真实依赖对齐。
+            sinceBuild = "262"
             untilBuild = "262.*"  // 覆盖到 2026.2
         }
     }
