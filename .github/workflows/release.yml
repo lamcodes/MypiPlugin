@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write  # 创建 Release 需要仓库写权限,GITHUB_TOKEN 默认只读
+
 jobs:
   build:
     runs-on: ubuntu-latest
