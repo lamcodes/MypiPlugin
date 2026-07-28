@@ -11,7 +11,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
  *
  * 方案转向后:actionPerformed 调 PiTerminalService.inject(依赖终端 + Messages 弹框),
  * 平台测试难可靠覆盖,留手动验证;此处只测 update 灰显逻辑(决策#7:有 editor 即启用,
- * 无选区也允许发"文件名:行号")。
+ * 无选区也允许发"@相对路径#L行号")。
  *
  * 用 [TestActionEvent.createTestEvent](非 deprecated,取代已移除的 createFromAnAction)
  * + 平台 [DataManager.getDataContext] 获取真实 DataContext(不手写,避免 override
@@ -33,7 +33,7 @@ class SendSelectionActionTest : BasePlatformTestCase() {
     }
 
     fun testUpdateEnabledWithoutSelection() {
-        // 决策#7:无选区也启用(发"文件名:行号"定位),不再灰显
+        // 决策#7:无选区也启用(发"@相对路径#L行号"定位),不再灰显
         myFixture.configureByText("App.java", "class App { int x = 1; }")
         val event = makeEvent()
         SendSelectionAction().update(event)
