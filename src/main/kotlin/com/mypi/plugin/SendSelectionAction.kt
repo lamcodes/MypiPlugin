@@ -10,8 +10,10 @@ import com.intellij.openapi.ui.Messages
  * 快捷键动作(Ctrl+Alt+;):把当前选区或光标定位注入到 pi 终端(只填不发送)。
  *
  * 上下文判断(决策#7):
- *  - 有选区 → [SelectionContextBuilder.build] 产出"文件名:起-止 + 代码围栏"。
- *  - 无选区 → [SelectionContextBuilder.buildFileLocator] 产出"文件名:光标行号"。
+ *  - 有选区 → [SelectionContextBuilder.build] 产出"@文件名#L起-止"。
+ *  - 无选区 → [SelectionContextBuilder.build] 产出"@文件名#L光标行号"(光标行作为起止行同时传入)。
+ *
+ * 注:本任务(Task1)仅同步删除 buildFileLocator 后的机械调用迁移;相对路径解析归 Task 2。
  *
  * 注入经 [PiTerminalService.inject];若 pi 终端未开,弹框提示去点启动按钮(决策#10)。
  */
@@ -33,7 +35,7 @@ class SendSelectionAction : AnAction() {
             SelectionContextBuilder.build(fileName, startLine, endLine)
         } else {
             val caretLine = doc.getLineNumber(editor.caretModel.offset) + 1
-            SelectionContextBuilder.buildFileLocator(fileName, caretLine)
+            SelectionContextBuilder.build(fileName, caretLine, caretLine)
         }
 
         // 注入到 pi 终端:按 InjectResult 分支决定聚焦或弹框提示(sealed 类型,编译期穷举)
