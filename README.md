@@ -6,7 +6,7 @@ MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Rework
 
 ## 特性
 
-- 🚀 **一键注入选区定位**:`Ctrl+Alt+;` 把当前选区/光标位置以 `文件名:起-止行` 形式填入 pi 终端输入行(**只填不发送**,留给你补问题)
+- 🚀 **一键注入选区定位**:`Ctrl+Alt+;` 把当前选区/光标位置以 `@相对路径#L起-止行` 形式填入 pi 终端输入行(**只填不发送**,留给你补问题)
 - 🖥️ **复用内置终端跑 pi**:点右侧 Pi 图标即在 IDE 终端启动 pi,无需自建面板、无需 RPC 协议;pi 跑在项目目录,作为 coding agent 能自行读取项目文件
 - 🎯 **焦点自动接力**:注入成功后焦点自动落到 pi 终端输入区,直接打字补问题 + 回车,无需手动切窗口
 - ♻️ **稳定重启**:手动退出 pi 后再点 Pi 图标会自动重启新会话(每次点图标都触发,不止首次)
@@ -68,8 +68,8 @@ cd MypiPlugin
 注入的内容形如:
 
 ```
-UserService.java:10-20      # 有选区:文件名:起始行-结束行(1-based)
-UserService.java:42          # 无选区:文件名:光标行号
+@src/main/java/com/x/UserService.java#L10-20   # 有选区:@相对路径#L起始行-结束行(1-based)
+@src/main/java/com/x/UserService.java#L42       # 无选区:@相对路径#L光标行号
 ```
 
 > **为什么只发定位不发代码?** pi 在项目目录下作为 coding agent 运行,能自行读取项目文件;插件只发定位串,保持 pi 输入行简洁,你补一句问题(如"这段为什么慢")直接回车即可。
@@ -120,7 +120,7 @@ src/main/kotlin/com/mypi/plugin/
 ├── PiTerminalService.kt        # 核心:用 Reworked Terminal 跑 pi + 选区注入(单会话、焦点接力、Experimental API 降级)
 ├── PiToolWindowFactory.kt      # 右侧 Pi 工具窗工厂(状态 Label 兜底,启动逻辑在 Service)
 ├── SendSelectionAction.kt      # Ctrl+Alt+; 注入动作(有选区发范围,无选区发单行定位)
-├── SelectionContextBuilder.kt  # 选区 → "文件名:行号" 定位串构造(纯逻辑)
+├── SelectionContextBuilder.kt  # 选区 → "@相对路径#L行号" 定位串构造(纯逻辑)
 ├── PiSettings.kt               # pi 路径持久化(PersistentStateComponent)
 └── PiConfigurable.kt           # Settings → Tools → Pi 配置页
 src/main/resources/META-INF/plugin.xml   # 插件声明(ToolWindow / Action / Configurable)
