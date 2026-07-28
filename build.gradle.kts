@@ -29,6 +29,9 @@ dependencies {
         intellijIdea("2026.2")
         // 依赖内置终端插件(Reworked Terminal 在此,提供 TerminalView 等)
         bundledPlugin("org.jetbrains.plugins.terminal")
+        // 依赖 MCP Server 插件(2025.2+ 内置,提供 IDE 工具给 Pi 调用)
+        // 通过反射访问,optional 依赖,旧版 IDEA 无此插件也能编译运行
+        bundledPlugin("com.intellij.mcpServer")
         // 测试基础设施:IntelliJ Platform 测试框架(提供 BasePlatformTestCase 等)
         testFramework(TestFrameworkType.Platform)
     }

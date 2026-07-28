@@ -85,6 +85,10 @@ class PiTerminalService(val project: Project) : Disposable {
      * 启动 pi 终端。单一会话:已开则聚焦 + 激活终端,不重开;未开则预检后建新 tab。
      * 必须在 EDT 调用(createTabBuilder/createTab 标注 @RequiresEdt)。
      *
+     * 新建 Pi 前会先注入 IDE MCP Server 连接信息([PiMcpConfigService.injectIdeMcpServer]),
+     * 让 Pi 启动后自动获得 read_file / search / build / debug 等工具。
+     * 已开时跳过注入(Pi 运行中改配置不生效,需重启)。
+     *
      * @return 错误信息;空串表示成功
      */
     fun openPi(): String {
@@ -92,6 +96,10 @@ class PiTerminalService(val project: Project) : Disposable {
             focusAndActivatePi()
             return ""
         }
+
+        // 新建 Pi 前注入 IDE MCP Server 连接信息(让 Pi 获得 IDE 工具)
+        injectMcpConfig()
+
         val piExe = resolvePiExecutable() ?: run {
             val msg = "启动失败:未找到 pi,请在 Settings→Tools→Pi 配置路径"
             notify(msg)
@@ -114,6 +122,18 @@ class PiTerminalService(val project: Project) : Disposable {
             val msg = "启动失败:${e.message ?: e.toString()}"
             notify(msg)
             msg
+        }
+    }
+
+    /**
+     * 注入 IDE MCP Server 配置到 Pi 的 mcp.json。
+     * MCP 不可用或用户关闭开关时静默降级,不影响 Pi 正常启动。
+     */
+    private fun injectMcpConfig() {
+        when (val result = PiMcpConfigService.getInstance(project).injectIdeMcpServer()) {
+            is PiMcpConfigService.InjectResult.Success -> notify("已注入 IDE MCP,Pi 可使用 IDE 工具")
+            is PiMcpConfigService.InjectResult.Failed -> notify("MCP 配置注入失败:${result.message}")
+            else -> { /* Disabled / McpNotAvailable / AlreadyConfigured: 静默跳过 */ }
         }
     }
 
