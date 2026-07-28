@@ -31,6 +31,10 @@ class PiSettings : PersistentStateComponent<PiSettings> {
     @Volatile
     var mcpDedupEnabled: Boolean = true
 
+    /** 是否开启性能计时日志：在 idea.log 输出各启动阶段耗时,用于排查启动慢问题。默认关闭。 */
+    @Volatile
+    var perfLoggingEnabled: Boolean = false
+
     override fun getState(): PiSettings = this
 
     override fun loadState(state: PiSettings) {
@@ -38,6 +42,7 @@ class PiSettings : PersistentStateComponent<PiSettings> {
         piPath = state.piPath
         mcpEnabled = state.mcpEnabled
         mcpDedupEnabled = state.mcpDedupEnabled
+        perfLoggingEnabled = state.perfLoggingEnabled
     }
 
     companion object {

@@ -38,22 +38,41 @@ class PiMcpConfigService(private val project: Project) {
      * @return [InjectResult] 注入结果，调用方可据此决定是否提示用户
      */
     fun injectIdeMcpServer(): InjectResult {
+        val perfLog = PiSettings.getInstance(project).perfLoggingEnabled
+        val t0 = if (perfLog) System.currentTimeMillis() else 0
         // 1. 检查用户是否启用了 MCP 集成
         if (!PiSettings.getInstance(project).mcpEnabled) {
+            if (perfLog) logger.info("injectIdeMcpServer: 用户未启用 MCP, 跳过 (${System.currentTimeMillis() - t0}ms)")
             return InjectResult.Disabled
         }
 
         // 2. 获取 IDE MCP Server SSE URL
-        val sseUrl = getMcpSseUrl() ?: return InjectResult.McpNotAvailable
+        val t1 = if (perfLog) System.currentTimeMillis() else 0
+        val sseUrl = getMcpSseUrl() ?: run {
+            if (perfLog) logger.info("injectIdeMcpServer: getMcpSseUrl 返回 null (${System.currentTimeMillis() - t1}ms), 跳过")
+            return InjectResult.McpNotAvailable
+        }
+        if (perfLog) {
+            logger.info("injectIdeMcpServer: getMcpSseUrl(反射) 耗时 ${System.currentTimeMillis() - t1}ms, url=$sseUrl")
+        }
 
         // 3. 去重检查：用户开启去重时,检测 Pi 是否已通过 import 获得了 IDEA MCP
+        val t2 = if (perfLog) System.currentTimeMillis() else 0
         if (PiSettings.getInstance(project).mcpDedupEnabled && isIdeaMcpAlreadyAvailable(sseUrl)) {
+            if (perfLog) logger.info("injectIdeMcpServer: 去重检测通过,已配置 (${System.currentTimeMillis() - t2}ms)")
             return InjectResult.AlreadyConfigured
+        }
+        if (perfLog && PiSettings.getInstance(project).mcpDedupEnabled) {
+            logger.info("injectIdeMcpServer: 去重检测耗时 ${System.currentTimeMillis() - t2}ms")
         }
 
         // 4. 写入 Pi 的 mcp.json
+        val t3 = if (perfLog) System.currentTimeMillis() else 0
         return try {
             val changed = writePiMcpConfig(sseUrl)
+            if (perfLog) {
+                logger.info("injectIdeMcpServer: writePiMcpConfig 耗时 ${System.currentTimeMillis() - t3}ms, changed=$changed, 总耗时 ${System.currentTimeMillis() - t0}ms")
+            }
             if (changed) InjectResult.Success else InjectResult.AlreadyConfigured
         } catch (e: Exception) {
             logger.warn("注入 IDE MCP 配置失败: ${e.message}", e)
@@ -69,6 +88,8 @@ class PiMcpConfigService(private val project: Project) {
      * 当前主要检测 claude-code import(读取 ~/.claude.json)。
      */
     private fun isIdeaMcpAlreadyAvailable(sseUrl: String): Boolean {
+        val perfLog = PiSettings.getInstance(project).perfLoggingEnabled
+        val t0 = if (perfLog) System.currentTimeMillis() else 0
         val piConfig = File(System.getProperty("user.home"), PI_MCP_CONFIG_PATH)
         if (!piConfig.exists()) return false
 
@@ -80,10 +101,11 @@ class PiMcpConfigService(private val project: Project) {
         val imports = config["imports"]?.jsonArray ?: return false
         for (importEntry in imports) {
             val importKind = importEntry.jsonPrimitive.content
-            if (importKind == "claude-code" && claudeCodeHasIdeaMcp(sseUrl)) {
-                return true
+            if (importKind == "claude-code") {
+                if (claudeCodeHasIdeaMcp(sseUrl)) return true
             }
         }
+        if (perfLog) logger.info("isIdeaMcpAlreadyAvailable: 无 claude-code import 匹配 (${System.currentTimeMillis() - t0}ms)")
         return false
     }
 
@@ -93,6 +115,8 @@ class PiMcpConfigService(private val project: Project) {
      * 匹配逻辑：遍历 mcpServers,检查 url 是否包含当前 IDEA MCP 的 host:port。
      */
     private fun claudeCodeHasIdeaMcp(sseUrl: String): Boolean {
+        val perfLog = PiSettings.getInstance(project).perfLoggingEnabled
+        val t0 = if (perfLog) System.currentTimeMillis() else 0
         val claudeConfig = File(System.getProperty("user.home"), ".claude.json")
         if (!claudeConfig.exists()) return false
 
@@ -111,9 +135,11 @@ class PiMcpConfigService(private val project: Project) {
             val url = server["url"]?.jsonPrimitive?.content ?: continue
             val hostPort = extractHostPort(url) ?: continue
             if (hostPort == ideaHostPort) {
+                if (perfLog) logger.info("claudeCodeHasIdeaMcp: 匹配成功 (${System.currentTimeMillis() - t0}ms)")
                 return true
             }
         }
+        if (perfLog) logger.info("claudeCodeHasIdeaMcp: 无匹配 (${System.currentTimeMillis() - t0}ms)")
         return false
     }
 

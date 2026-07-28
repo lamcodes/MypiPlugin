@@ -26,6 +26,7 @@ class PiConfigurable(private val project: Project) : Configurable {
     internal val pathField = JBTextField()
     internal val mcpCheckBox = JBCheckBox("启用 IDE MCP 集成(让 Pi 能读写文件、搜索代码、构建项目、调试等)")
     internal val mcpDedupCheckBox = JBCheckBox("开启去重检测(若 Pi 已通过 claude-code 等 import 获得 IDEA MCP,则跳过重复注入)")
+    internal val perfLoggingCheckBox = JBCheckBox("开启性能计时日志(各启动阶段耗时输出到 idea.log,用于排查启动慢)")
 
     override fun getDisplayName(): String = "Pi"
 
@@ -47,6 +48,9 @@ class PiConfigurable(private val project: Project) : Configurable {
         // 去重检测开关
         panel.add(mcpDedupCheckBox, gbc)
 
+        // 性能计时日志开关
+        panel.add(perfLoggingCheckBox, gbc)
+
         // 底部填充
         gbc.weighty = 1.0
         panel.add(JPanel(), gbc)
@@ -59,7 +63,8 @@ class PiConfigurable(private val project: Project) : Configurable {
         val settings = PiSettings.getInstance(project)
         return pathField.text != settings.piPath ||
             mcpCheckBox.isSelected != settings.mcpEnabled ||
-            mcpDedupCheckBox.isSelected != settings.mcpDedupEnabled
+            mcpDedupCheckBox.isSelected != settings.mcpDedupEnabled ||
+            perfLoggingCheckBox.isSelected != settings.perfLoggingEnabled
     }
 
     /**
@@ -73,9 +78,11 @@ class PiConfigurable(private val project: Project) : Configurable {
         settings.piPath = trimmed
         settings.mcpEnabled = mcpCheckBox.isSelected
         settings.mcpDedupEnabled = mcpDedupCheckBox.isSelected
+        settings.perfLoggingEnabled = perfLoggingCheckBox.isSelected
         pathField.text = trimmed
         mcpCheckBox.isSelected = settings.mcpEnabled
         mcpDedupCheckBox.isSelected = settings.mcpDedupEnabled
+        perfLoggingCheckBox.isSelected = settings.perfLoggingEnabled
 
         // 用户从「启用」切换到「禁用」→ 清除 mcp.json 中的 intellij 条目
         if (prevMcpEnabled && !settings.mcpEnabled) {
@@ -95,5 +102,6 @@ class PiConfigurable(private val project: Project) : Configurable {
         pathField.text = settings.piPath
         mcpCheckBox.isSelected = settings.mcpEnabled
         mcpDedupCheckBox.isSelected = settings.mcpDedupEnabled
+        perfLoggingCheckBox.isSelected = settings.perfLoggingEnabled
     }
 }

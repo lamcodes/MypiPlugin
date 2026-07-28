@@ -4,6 +4,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowManager
@@ -45,6 +46,8 @@ sealed interface InjectResult {
  */
 @Service(Service.Level.PROJECT)
 class PiTerminalService(val project: Project) : Disposable {
+
+    private val logger = thisLogger()
 
     init {
         // 监听 Pi 工具窗"被显示"(每次点 Pi 图标都触发,不止首次)。
@@ -92,19 +95,31 @@ class PiTerminalService(val project: Project) : Disposable {
      * @return 错误信息;空串表示成功
      */
     fun openPi(): String {
+        val perfLog = PiSettings.getInstance(project).perfLoggingEnabled
+        val totalStart = if (perfLog) System.currentTimeMillis() else 0
         if (piView != null) { // 单一会话:已开则聚焦 + 激活终端,不重复建
             focusAndActivatePi()
             return ""
         }
 
         // 新建 Pi 前注入 IDE MCP Server 连接信息(让 Pi 获得 IDE 工具)
+        val injectStart = if (perfLog) System.currentTimeMillis() else 0
         injectMcpConfig()
+        if (perfLog) {
+            logger.info("openPi: injectMcpConfig 耗时 ${System.currentTimeMillis() - injectStart}ms")
+        }
 
+        val resolveStart = if (perfLog) System.currentTimeMillis() else 0
         val piExe = resolvePiExecutable() ?: run {
             val msg = "启动失败:未找到 pi,请在 Settings→Tools→Pi 配置路径"
             notify(msg)
             return msg
         }
+        if (perfLog) {
+            logger.info("openPi: resolvePiExecutable 耗时 ${System.currentTimeMillis() - resolveStart}ms, piExe=$piExe")
+        }
+
+        val createStart = if (perfLog) System.currentTimeMillis() else 0
         return runCatching {
             val manager = TerminalToolWindowTabsManager.getInstance(project)
             val tab = manager.createTabBuilder()
@@ -116,9 +131,15 @@ class PiTerminalService(val project: Project) : Disposable {
             piView = tab.view
             registerCloseListener(tab.content)
             activateTerminal()
+            if (perfLog) {
+                logger.info("openPi: createTab+activate 耗时 ${System.currentTimeMillis() - createStart}ms, 总耗时 ${System.currentTimeMillis() - totalStart}ms")
+            }
             notify("已就绪")
             ""
         }.getOrElse { e ->
+            if (perfLog) {
+                logger.warn("openPi: createTab 失败耗时 ${System.currentTimeMillis() - createStart}ms, 总耗时 ${System.currentTimeMillis() - totalStart}ms", e)
+            }
             val msg = "启动失败:${e.message ?: e.toString()}"
             notify(msg)
             msg
