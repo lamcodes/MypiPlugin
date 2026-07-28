@@ -2,7 +2,7 @@
 
 > 在 IntelliJ IDEA 里一键把「光标/选区位置」注入 Pi 终端,让 Pi coding agent 直接读你的代码。
 
-MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Reworked Terminal)跑 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent。**选中代码 → `Ctrl+Alt+;` → 定位串注入到 pi 输入行(只填不发送)**,焦点自动切到 pi 终端,你补一句问题回车即可,全程不离开 IDE。
+MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Reworked Terminal)跑 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent。**选中代码 → `Ctrl+Alt+;` → 定位串注入到 pi 输入行(只填不发送)**,焦点自动切到 pi 终端,你补一句问题回车即可,全程不离开 IDE。启动 Pi 时还会自动注入 IDEA MCP Server,让 Pi 直接拿到 IDE 的读文件、搜符号、构建、调试等工具。
 
 ## 特性
 
@@ -11,6 +11,7 @@ MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Rework
 - 🎯 **焦点自动接力**:注入成功后焦点自动落到 pi 终端输入区,直接打字补问题 + 回车,无需手动切窗口
 - ♻️ **稳定重启**:手动退出 pi 后再点 Pi 图标会自动重启新会话(每次点图标都触发,不止首次)
 - ⚙️ **可配置 Pi 路径**:Settings → Tools → Pi,支持自定义 pi 可执行路径,不强制依赖 PATH
+- 🔌 **IDE MCP 自动集成**:启动 Pi 时自动注入 IDEA MCP Server(2025.2+),让 Pi 获得 read_file、search_symbols、build_project、debug 等全套 IDE 工具;可在 Settings → Tools → Pi 关闭
 
 ## 前置要求
 
@@ -27,17 +28,34 @@ MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Rework
 
 ## 安装
 
-当前为 MVP 阶段,从源码构建:
+### 方式一:添加自定义插件仓库(推荐,支持自动更新)
+
+插件通过 GitHub Releases 分发。团队只需添加一次仓库地址,后续发版 IDE 会自动提示更新。
+
+1. **Settings → Plugins → ⚙️ → Manage Plugin Repositories...**
+2. 点 `+` 添加仓库地址:
+   ```
+   https://github.com/lamcodes/MypiPlugin/releases/latest/download/updatePlugins.xml
+   ```
+3. 回到 Marketplace,搜索 `MypiPlugin` → Install → 重启 IDE
+
+> 仓库地址始终指向最新 Release 的 `updatePlugins.xml`,发新版后无需团队改地址。
+
+### 方式二:从磁盘安装(单次手动)
+
+直接下载对应版本的 zip,然后 **Settings → Plugins → ⚙️ → Install Plugin from Disk** → 选 zip → 重启。
+
+下载地址:`https://github.com/lamcodes/MypiPlugin/releases/latest`
+
+### 方式三:从源码构建(开发用)
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/lamcodes/MypiPlugin.git
 cd MypiPlugin
 ./gradlew buildPlugin
 ```
 
 构建产物:`build/distributions/MypiPlugin-0.1.0.zip`。
-
-导入 IDE:**IntelliJ IDEA → Settings → Plugins → ⚙️ → Install Plugin from Disk** → 选择上述 zip → 重启 IDE。
 
 ## 使用
 
@@ -112,6 +130,24 @@ cd MypiPlugin
 ```
 
 需要 JDK 21;项目自带 Gradle Wrapper,无需预装 Gradle。
+
+### 发版流程
+
+发版走 GitHub Actions 自动构建并发布到 Releases。打 tag 即触发:
+
+```bash
+# 1. 更新版本号:改 build.gradle.kts 里的 version 与 intellijPlatform.pluginConfiguration.version
+# 2. 提交并打 tag
+git commit -am "release: x.x.x"
+git tag vx.x.x
+git push origin main --tags
+```
+
+CI 会自动:构建插件 → 生成 `updatePlugins.xml` → 创建 GitHub Release 并上传 zip 与索引。
+
+> ⚠️ **gradlew 必须保持可执行权限**(`100755`)。Windows 上改动后若误降权,Linux CI 会 `Permission denied`。用 `git update-index --chmod=+x gradlew` 恢复。
+
+团队成员用「方式一」安装后,发新版无需任何操作,IDE 自动检测更新。
 
 ### 项目结构
 

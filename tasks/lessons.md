@@ -31,3 +31,45 @@
 - 派 implementer 时,若任务触及 Tier2 测试,dispatch 里**明确禁止 CLI 跑 Tier2**,改走编译验证——否则 agent 会卡死。
 
 **附带——杀卡死的 IDEA sandbox**:Git Bash `ps -W` 第一列是 msys2 内部 PID(拿去 taskkill 会报"找不到进程"),**第六列 WINPID 才是 Windows PID**。用 `MSYS_NO_PATHCONV=1 taskkill /F /PID <WINPID>` 杀。识别 sandbox:进程命令行含 `idea-2026.2-win`(jbr 路径)。
+
+## Windows 项目 push 到 GitHub 后,gradlew 必须手动加执行权限
+
+**错误模式**:Windows 上创建的 Gradle 项目(如 IntelliJ 插件),`gradlew` 文件 git mode 默认是 `100644`(不可执行)。push 到 GitHub 后,Linux CI 跑 `./gradlew` 立即 `Permission denied`,但本地 Windows 完全正常——导致"本地能跑、CI 必挂"。
+
+**踩坑实例**(MypiPlugin,2026-07-28):
+- GitHub Actions 跑 `./gradlew buildPlugin` 报 `Permission denied`。`git ls-files -s gradlew` 显示 `100644`。本地从未报错,因为 Windows 不认 Unix 执行位。
+
+**预防规则**:
+- 任何 Windows 创建、要在 Linux/macOS CI 跑的 Gradle 项目,**首次 push 前执行** `git update-index --chmod=+x gradlew && git commit -m "chmod"`。
+- CI 构建失败且本地正常时,`git ls-files -s <脚本>` 看 mode:`100644`=不可执行(坑),`100755`=可执行。
+- 同理适用于其他 shell 脚本(`.sh`),不止 `gradlew`。
+
+## GitHub Actions `${{ }}` 表达式不要写进 bash heredoc,改用 env 变量
+
+**错误模式**:在 `run: |` 的 heredoc(`<< EOF`)里直接内联 `${{ steps.xxx.outputs.yyy }}`,GitHub Actions 表达式与 heredoc 文本交互会产生意外字符注入(实测 `${{ steps.version.outputs.version }}` 后紧跟 `>` 时,生成结果多出一个 `}`)。
+
+**踩坑实例**(MypiPlugin,2026-07-28):
+- workflow 用 `cat > updatePlugins.xml << EOF ... version="${{ steps.version.outputs.version }}>" ... EOF` 生成 XML,产物里 `version="0.1.0}"` 多了花括号,IDE 无法识别插件版本。同行的 `url=".../${{ steps.xxx }}/..."` 却正常,问题只出在表达式紧跟特定字符的行。
+
+**预防规则**:
+- heredoc 里需要 GitHub Actions 变量时,**先把 `${{ }}` 赋给 `env:` 再在 heredoc 里用 bash 变量**:
+  ```yaml
+  - run: |
+      cat > file << EOF
+      val="${MY_VAR}"
+      EOF
+    env:
+      MY_VAR: ${{ steps.x.outputs.y }}
+  ```
+- `${{ }}` 表达式只用在 YAML 键值、`with:`、`env:` 里,不直接写进 heredoc / 复杂 shell 字符串,避免转义与字符注入坑。
+
+## GitHub Actions 首次引入 workflow 文件的那次 tag push 不触发该 workflow
+
+**错误模式**:新建 workflow 文件 + 在**同一个 commit** 里打 tag 并 push,该 tag push 事件不会触发这个 workflow——因为 GitHub 还没为这个新 workflow 注册触发器,事件被静默丢弃(API 显示 `total_count: 0`,workflow 本身 `state: active`)。
+
+**踩坑实例**(MypiPlugin,2026-07-28):
+- commit 4b51638 同时新增 `.github/workflows/release.yml` 和 tag `v0.1.0`,push 后 Actions 零触发。workflow 列表 `active` 但 runs `0`。
+
+**预防规则**:
+- 新 workflow 首次引入后,**先把含 workflow 文件的 commit 单独 push,再打 tag push**;或删 tag 重新打(`git tag -d` → `git push origin :refs/tags` → 重打重推),第二次 push 时 workflow 已注册,能正常触发。
+- CI 零触发排查顺序:① `actions/workflows` 看 `state: active`(排除语法错/被禁) → ② `actions/runs` 看 `total_count`(看有没有事件到达) → ③ 若 active 但 runs=0,优先怀疑"首次引入未注册"或 tag/分支名不匹配 `on:` 触发器。
