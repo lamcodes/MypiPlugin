@@ -52,8 +52,6 @@ dependencies {
     testImplementation("org.opentest4j:opentest4j:1.3.0")
     // IJPL-159134 坑:BasePlatformTestCase 继承 junit.framework.TestCase,需 junit4 在编译期可见(非仅运行期)
     testImplementation("junit:junit:4.13.2")
-    // 测试构造 JSON(DOM)复用同一版本
-    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 }
 
 intellijPlatform {

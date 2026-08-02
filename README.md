@@ -2,7 +2,7 @@
 
 > 在 IntelliJ IDEA 里一键把「光标/选区位置」注入 Pi 终端,让 Pi coding agent 直接读你的代码。
 
-MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Reworked Terminal)跑 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent。**选中代码 → `Ctrl+Alt+;` → 定位串注入到 pi 输入行(只填不发送)**,焦点自动切到 pi 终端,你补一句问题回车即可,全程不离开 IDE。启动 Pi 时还会自动注入 IDEA MCP Server,让 Pi 直接拿到 IDE 的读文件、搜符号、构建、调试等工具。
+MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Reworked Terminal)跑 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent。**选中代码 → `Ctrl+Alt+;` → 定位串注入到 pi 输入行(只填不发送)**,焦点自动切到 pi 终端,你补一句问题回车即可,全程不离开 IDE。启动 Pi 时,在 MCP 可用且开关开启的情况下自动注入 IDEA MCP Server,让 Pi 直接拿到 IDE 的读文件、搜符号、构建、调试等工具。
 
 ## 特性
 
@@ -11,7 +11,7 @@ MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Rework
 - 🎯 **焦点自动接力**:注入成功后焦点自动落到 pi 终端输入区,直接打字补问题 + 回车,无需手动切窗口
 - ♻️ **稳定重启**:手动退出 pi 后再点 Pi 图标会自动重启新会话(每次点图标都触发,不止首次)
 - ⚙️ **可配置 Pi 路径**:Settings → Tools → Pi,支持自定义 pi 可执行路径,不强制依赖 PATH
-- 🔌 **IDE MCP 自动集成**:启动 Pi 时自动注入 IDEA MCP Server(2025.2+),让 Pi 获得 read_file、search_symbols、build_project、debug 等全套 IDE 工具;可在 Settings → Tools → Pi 关闭
+- 🔌 **IDE MCP 自动集成**:启动 Pi 时,在 MCP 可用且开关开启的情况下自动注入 IDEA MCP Server(2025.2+),让 Pi 获得读文件、搜代码、构建、调试等 IDE 工具;可在 Settings → Tools → Pi 关闭
 
 ## 前置要求
 
@@ -98,9 +98,14 @@ cd MypiPlugin
 
 ## 配置项
 
-| 配置 | 位置 | 默认 | 说明 |
-|---|---|---|---|
-| pi 可执行路径 | Settings → Tools → Pi | 空(用 PATH) | pi 的绝对路径;留空则从系统 PATH 查找 |
+所有配置集中在 **Settings → Tools → Pi**。
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| pi 可执行路径 | 空(用 PATH) | pi 的绝对路径;留空则从系统 PATH 查找 |
+| 启用 IDE MCP 集成 | 开 | 启动 Pi 时自动注入 IDEA MCP Server(需 IDEA MCP 可用),让 Pi 获得读文件/搜代码/构建/调试等工具(IDEA 2025.2+) |
+| 开启去重检测 | 开 | 若 Pi 已通过 claude-code 等 import 获得 IDEA MCP,则跳过重复注入,避免 mcp.json 出现重复条目 |
+| 开启性能计时日志 | 关 | 各启动阶段耗时输出到 idea.log,排查启动慢用 |
 
 ## 故障排查
 
@@ -154,14 +159,27 @@ CI 会自动:构建插件 → 生成 `updatePlugins.xml` → 创建 GitHub Relea
 ```
 src/main/kotlin/com/mypi/plugin/
 ├── PiTerminalService.kt        # 核心:用 Reworked Terminal 跑 pi + 选区注入(单会话、焦点接力、Experimental API 降级)
+├── PiMcpConfigService.kt       # 把 IDEA MCP Server 注入 Pi 的 mcp.json(反射访问、claude-code 去重、原子写入)
 ├── PiToolWindowFactory.kt      # 右侧 Pi 工具窗工厂(状态 Label 兜底,启动逻辑在 Service)
 ├── SendSelectionAction.kt      # Ctrl+Alt+; 注入动作(有选区发范围,无选区发单行定位)
-├── SelectionContextBuilder.kt  # 选区 → "@相对路径#L行号" 定位串构造(纯逻辑)
-├── PiSettings.kt               # pi 路径持久化(PersistentStateComponent)
-└── PiConfigurable.kt           # Settings → Tools → Pi 配置页
-src/main/resources/META-INF/plugin.xml   # 插件声明(ToolWindow / Action / Configurable)
-src/test/kotlin/com/mypi/plugin/         # Tier1 纯逻辑 + Tier2 平台测试
+├── SelectionContextBuilder.kt  # 选区 → "@相对路径#L行号" 定位串构造(纯逻辑,零平台依赖)
+├── PiSettings.kt               # 持久化设置:pi 路径 + MCP/去重/性能日志开关(PersistentStateComponent)
+└── PiConfigurable.kt           # Settings → Tools → Pi 配置页(路径框 + 3 个开关)
+src/main/resources/META-INF/plugin.xml   # 插件声明(ToolWindow / Action / Configurable + 3 个 depends)
+src/test/kotlin/com/mypi/plugin/         # 测试分层见下表
 ```
+
+**测试分层:**
+
+| 文件 | 层级 | 覆盖 |
+|---|---|---|
+| `SelectionContextBuilderTest` | Tier1 纯逻辑(JUnit5) | 定位串拼接(6 用例) |
+| `PiSettingsStateTest` | Tier1 纯逻辑(JUnit5) | `piPath` 持久化状态(4 用例) |
+| `SendSelectionActionTest` | Tier2 平台(`BasePlatformTestCase`) | `update` 启用逻辑(3 用例) |
+| `PiConfigurableTest` | Tier2 平台 | 配置页与 `piPath` roundtrip(3 用例) |
+| `PiSettingsPlatformTest` | Tier2 平台 | PiSettings 单例与 `piPath` 读写(3 用例) |
+
+`PiTerminalService` / `PiMcpConfigService` / `PiToolWindowFactory` 暂未覆盖;`PiSettings` 的 MCP/去重/性能开关及 `PiConfigurable` 的对应 roundtrip 也暂未覆盖(终端 API + EDT + 反射 + 文件 IO 难以在平台测试可靠复现,依赖手动验证)。
 
 ### 工作原理
 
@@ -183,7 +201,7 @@ src/test/kotlin/com/mypi/plugin/         # Tier1 纯逻辑 + Tier2 平台测试
 - **只填不发送**:注入定位串后需用户手动补问题 + 回车(刻意设计,保持 pi 输入简洁)
 - **不收集 pi 回复**:回复直接显示在 pi 终端内,插件不在侧栏做二次展示
 - **单会话**:一个项目一个 pi 终端,暂不支持多会话/历史保留
-- **PiTerminalService 未覆盖单元测试**:终端 API + EDT 难在平台测试里可靠复现,依赖手动验证(纯逻辑部分如 `SelectionContextBuilder` 已覆盖)
+- **平台服务与 MCP 配置未完全覆盖测试**:`PiTerminalService` / `PiMcpConfigService` / `PiToolWindowFactory` 涉及终端 API + EDT + 反射 + 文件 IO,难以在平台测试可靠复现,依赖手动验证;`SelectionContextBuilder` / `SendSelectionAction.update` 与 `piPath` 配置层已覆盖,但 MCP/去重/性能开关仍未覆盖(见上「测试分层」)
 
 ## 项目状态
 
