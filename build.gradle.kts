@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "com.mypi"
-version = "0.1.0"
+version = "0.2.0"
 
 // IntelliJ Platform 专用仓库(放行 IntelliJ 自有依赖与 bundled plugin 元数据)
 repositories {
@@ -56,7 +56,7 @@ dependencies {
 
 intellijPlatform {
     pluginConfiguration {
-        version = "0.1.0"
+        version = "0.2.0"
         ideaVersion {
             // 代码硬依赖 2026.2 才稳定提供的 Reworked Terminal 新 API(PiTerminalService 里
             // createSendTextBuilder / sendEndKeyBeforeText / TerminalToolWindowTabsManager 等 10 处调用);
