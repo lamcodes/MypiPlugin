@@ -28,7 +28,7 @@ class PiConfigurable(private val project: Project) : Configurable {
     internal val mcpCheckBox = JBCheckBox("启用 IDE MCP 集成(让 Pi 能读写文件、搜索代码、构建项目、调试等)")
     internal val mcpDedupCheckBox = JBCheckBox("开启去重检测(若 Pi 已通过 claude-code 等 import 获得 IDEA MCP,则跳过重复注入)")
     internal val perfLoggingCheckBox = JBCheckBox("开启性能计时日志(各启动阶段耗时输出到 idea.log,用于排查启动慢)")
-    internal val formatCombo = JComboBox(arrayOf("冒号风格 (path:行号)", "GitHub 风格 (@path#L行号)"))
+    internal val formatCombo = JComboBox(arrayOf("冒号风格 (@path:行号)", "GitHub 风格 (@path#L行号)"))
 
     override fun getDisplayName(): String = "Pi"
 
