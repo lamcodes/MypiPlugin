@@ -35,6 +35,10 @@ class PiSettings : PersistentStateComponent<PiSettings> {
     @Volatile
     var perfLoggingEnabled: Boolean = false
 
+    /** 选区格式:"COLON_LINE"=冒号风格(path:行号);"GITHUB_ANCHOR"=GitHub 风格(@path#L行号)。空串等价 COLON_LINE。 */
+    @Volatile
+    var selectionFormat: String = ""
+
     override fun getState(): PiSettings = this
 
     override fun loadState(state: PiSettings) {
@@ -43,6 +47,7 @@ class PiSettings : PersistentStateComponent<PiSettings> {
         mcpEnabled = state.mcpEnabled
         mcpDedupEnabled = state.mcpDedupEnabled
         perfLoggingEnabled = state.perfLoggingEnabled
+        selectionFormat = state.selectionFormat
     }
 
     companion object {
