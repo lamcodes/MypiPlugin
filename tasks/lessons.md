@@ -16,7 +16,22 @@
 
 **预防规则**:写 JVM 依赖坐标、IntelliJ Platform type、Gradle 版本下限前,查官方文档或 curl 验证 URL,不凭记忆。
 
-## Tier2 平台测试别在 CLI 跑(IDEA sandbox 协程库冲突会卡死)
+## MypiPlugin 自动化验证禁则:`./gradlew test`(全量) 和 Tier2 平台测试禁止在 CLI 执行
+
+**硬规则**:本项目 `./gradlew test`(全量)或任何指向 Tier2 平台测试(`BasePlatformTestCase` 子类:`SendSelectionActionTest`、`PiConfigurableTest`、`PiSettingsPlatformTest`)的 CLI 命令,都会触发 `prepareTestSandbox` → 启动 IDEA sandbox → 协程库冲突 → 287s+ 卡死。这在子智能体中必僵死(SendMessage 无响应);在主会话中也严重拖慢。
+
+**允许的验证方式**:
+- `./gradlew compileKotlin compileTestKotlin` — 编译验证(最快,秒级)
+- `./gradlew test --tests "com.mypi.plugin.SelectionContextBuilderTest"` — 仅 Tier1 纯 JUnit 测试(零 IntelliJ 依赖,秒级)
+- IDEA MCP `build_project` — 编译验证(Gradle 不进 sandbox)
+- IDEA MCP `execute_run_configuration` 在真实 IDE 跑 Tier2 测试(需有 run configuration)
+- 手动验证(启动 IDE 实例实测)
+
+**适用场景**:
+- 任何"验证一下"、"跑个测试"、"确认都通过"的请求 → 默认用编译验证,不要下意识打 `./gradlew test`
+- 子智能体的 dispatch prompt → 明确写"只用编译验证,禁止 CLI 跑 Tier2"
+
+## MypiPlugin 子智能体卡死规避:避免 prepareTestSandbox,派发时只要求编译
 
 **错误模式**:用 `./gradlew test`(或 `--tests` 指向 `BasePlatformTestCase` 子类)跑 Tier2 平台测试时,启动的 IDEA 2026.2 sandbox 因 `kotlinx.coroutines` debug metadata 版本冲突(`Expected: 1, got 2. Please update the Kotlin standard library.`)加载失败——首个测试跑 ~287s 才 skip、后续测试不跑;更糟的是会让执行型 subagent 僵死(SendMessage 无响应,占用 sandbox 进程)。
 
