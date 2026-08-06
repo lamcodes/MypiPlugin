@@ -41,11 +41,40 @@ jobs:
           ZIP_NAME=$(basename $(ls build/distributions/*.zip | head -1))
           echo "name=$ZIP_NAME" >> $GITHUB_OUTPUT
 
+      # 从 plugin.xml 提取 CDATA description —— 单一真相源,避免与插件描述硬编码重复导致漂移
+      - name: Extract Description from plugin.xml
+        id: desc
+        run: |
+          DESCRIPTION=$(sed -n '/<description><!\[CDATA\[/,/]]><\/description>/{//!p;}' src/main/resources/META-INF/plugin.xml)
+          {
+            echo "body<<EOF"
+            echo "$DESCRIPTION"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      # 从 CHANGELOG.md 提取对应版本段作为 Release body;缺失则 fail fast,强制发版前补写 CHANGELOG
+      - name: Extract Release Notes from CHANGELOG
+        id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          BODY=$(awk -v v="$VERSION" '/^## \[/{p=index($0,"["v"]")} p&&/^## \[/&&!index($0,"["v"]"){p=0} p' CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            echo "::error::CHANGELOG.md 未找到版本 $VERSION 的段落,请先补写 '## [$VERSION] - YYYY-MM-DD' 段"
+            exit 1
+          fi
+          {
+            echo "body<<EOF"
+            echo "$BODY"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Generate updatePlugins.xml
         env:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
           ZIP_NAME: ${{ steps.artifact.outputs.name }}
+          DESC: ${{ steps.desc.outputs.body }}
         run: |
           cat > updatePlugins.xml << EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -55,9 +84,7 @@ jobs:
                       version="${VERSION}">
                   <name>MypiPlugin</name>
                   <description><![CDATA[
-                      在 IntelliJ 内置终端跑 Pi coding agent,一键把选区定位注入 Pi。
-                      选中代码 → Ctrl+Alt+; → 定位串(@相对路径#L行号)填入 Pi 终端(只填不发送),焦点自动接力。
-                      IDE MCP 集成(2025.2+):启动 Pi 时自动注入 IDEA MCP Server。
+          ${DESC}
                   ]]></description>
                   <idea-version since-build="262" until-build="262.*"/>
               </plugin>
@@ -70,5 +97,5 @@ jobs:
           files: |
             build/distributions/${{ steps.artifact.outputs.name }}
             updatePlugins.xml
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}
           fail_on_unmatched_files: true
