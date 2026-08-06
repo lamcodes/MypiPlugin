@@ -14,8 +14,11 @@ import com.intellij.openapi.vfs.VirtualFile
  * 快捷键动作(Ctrl+Alt+;):把当前选区或光标定位注入到 pi 终端(只填不发送)。
  *
  * 上下文判断(决策#7):
- *  - 有选区 → [SelectionContextBuilder.build] 产出 "@相对路径#L起-止行"。
- *  - 无选区 → [SelectionContextBuilder.build] 产出 "@相对路径#L光标行"(传 caretLine 两次)。
+ *  - 有选区 → [SelectionContextBuilder.build] 产出定位串(选区起止行)。
+ *  - 无选区 → [SelectionContextBuilder.build] 产出定位串(光标行,传 caretLine 两次)。
+ *
+ * 行锚点格式由设置项 [PiSettings.selectionFormat] 决定:COLON_LINE 产出 "path:行号",
+ * GITHUB_ANCHOR 产出 "@path#L行号";空串或非法值回退 COLON_LINE。
  *
  * 路径经 [resolvePath] 解析为"相对项目根"(与 pi 启动的工作目录同源);项目外文件降级为裸文件名。
  * 注入经 [PiTerminalService.inject];若 pi 终端未开,弹框提示去点启动按钮(决策#10)。
@@ -28,17 +31,19 @@ class SendSelectionAction : AnAction() {
         val file = e.getData(CommonDataKeys.VIRTUAL_FILE)
         val path = resolvePath(project, file)
         val doc = editor.document
+        val settings = PiSettings.getInstance(project)
+        val format = parseFormat(settings.selectionFormat)
         val selModel = editor.selectionModel
         val selectedText = selModel.selectedText
 
-        // 有选区发范围;无选区发单行(传 caretLine 两次,build 内部合并为 #L单行号)
+        // 有选区发范围;无选区发单行(传 caretLine 两次,build 内部合并为单行号)
         val text = if (!selectedText.isNullOrEmpty()) {
             val startLine = doc.getLineNumber(selModel.selectionStart) + 1
             val endLine = doc.getLineNumber(selModel.selectionEnd) + 1
-            SelectionContextBuilder.build(path, startLine, endLine)
+            SelectionContextBuilder.build(path, startLine, endLine, format)
         } else {
             val caretLine = doc.getLineNumber(editor.caretModel.offset) + 1
-            SelectionContextBuilder.build(path, caretLine, caretLine)
+            SelectionContextBuilder.build(path, caretLine, caretLine, format)
         }
 
         // 注入到 pi 终端:按 InjectResult 分支决定聚焦或弹框提示(sealed 类型,编译期穷举)
@@ -51,7 +56,7 @@ class SendSelectionAction : AnAction() {
     }
 
     override fun update(e: AnActionEvent) {
-        // 始终启用(决策#7):无选区也允许,发"@相对路径#L行号"定位;仅需有编辑器
+        // 始终启用(决策#7):无选区也允许,发"定位串"行号;仅需有编辑器
         e.presentation.isEnabledAndVisible = e.getData(CommonDataKeys.EDITOR) != null
     }
 
@@ -70,5 +75,18 @@ class SendSelectionAction : AnAction() {
         val basePath = project.basePath ?: return file.name
         val baseDir = LocalFileSystem.getInstance().findFileByPath(basePath) ?: return file.name
         return VfsUtilCore.getRelativePath(file, baseDir, '/') ?: file.name
+    }
+
+    /**
+     * 将持久化的格式字符串解析为 [SelectionFormat] 枚举。
+     * 空串或非法值回退到 [SelectionFormat.COLON_LINE]。
+     */
+    private fun parseFormat(raw: String): SelectionFormat {
+        if (raw.isEmpty()) return SelectionFormat.COLON_LINE
+        return try {
+            SelectionFormat.valueOf(raw)
+        } catch (_: IllegalArgumentException) {
+            SelectionFormat.COLON_LINE
+        }
     }
 }
