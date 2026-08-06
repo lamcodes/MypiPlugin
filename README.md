@@ -143,13 +143,16 @@ src/main/java/com/x/UserService.java:42          # 无选区(冒号格式,默认
 
 ```bash
 # 1. 更新版本号:改 build.gradle.kts 里的 version 与 intellijPlatform.pluginConfiguration.version
-# 2. 提交并打 tag
+# 2. 在 CHANGELOG.md 顶部新增 '## [x.x.x] - YYYY-MM-DD' 段,写面向用户的更新说明
+# 3. 提交并打 tag
 git commit -am "release: x.x.x"
 git tag vx.x.x
 git push origin main --tags
 ```
 
-CI 会自动:构建插件 → 生成 `updatePlugins.xml` → 创建 GitHub Release 并上传 zip 与索引。
+CI 会自动:构建插件 → 从 `plugin.xml` 提取描述生成 `updatePlugins.xml`(单一真相源) → 从 `CHANGELOG.md` 读取对应版本段作为 Release 说明 → 创建 GitHub Release 并上传 zip 与索引。
+
+> ⚠️ **CHANGELOG 是发版必需项**:CI 会从 `CHANGELOG.md` 提取 `## [版本号]` 段作为 Release body,找不到对应版本段会**构建失败**。打 tag 前务必先在 CHANGELOG.md 补写该版本段。
 
 > ⚠️ **gradlew 必须保持可执行权限**(`100755`)。Windows 上改动后若误降权,Linux CI 会 `Permission denied`。用 `git update-index --chmod=+x gradlew` 恢复。
 
