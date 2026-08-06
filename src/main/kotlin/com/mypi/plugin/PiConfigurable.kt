@@ -8,6 +8,7 @@ import com.intellij.ui.components.JBTextField
 import java.awt.BorderLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 
@@ -27,6 +28,7 @@ class PiConfigurable(private val project: Project) : Configurable {
     internal val mcpCheckBox = JBCheckBox("启用 IDE MCP 集成(让 Pi 能读写文件、搜索代码、构建项目、调试等)")
     internal val mcpDedupCheckBox = JBCheckBox("开启去重检测(若 Pi 已通过 claude-code 等 import 获得 IDEA MCP,则跳过重复注入)")
     internal val perfLoggingCheckBox = JBCheckBox("开启性能计时日志(各启动阶段耗时输出到 idea.log,用于排查启动慢)")
+    internal val formatCombo = JComboBox(arrayOf("冒号风格 (path:行号)", "GitHub 风格 (@path#L行号)"))
 
     override fun getDisplayName(): String = "Pi"
 
@@ -41,6 +43,10 @@ class PiConfigurable(private val project: Project) : Configurable {
         // pi 可执行路径输入框
         val labeled = LabeledComponent.create(pathField, "pi 可执行路径(留空则使用 PATH 中的 pi):")
         panel.add(labeled, gbc)
+
+        // 选区格式下拉框
+        val formatLabeled = LabeledComponent.create(formatCombo, "选区格式:")
+        panel.add(formatLabeled, gbc)
 
         // MCP 集成开关
         panel.add(mcpCheckBox, gbc)
@@ -64,7 +70,8 @@ class PiConfigurable(private val project: Project) : Configurable {
         return pathField.text != settings.piPath ||
             mcpCheckBox.isSelected != settings.mcpEnabled ||
             mcpDedupCheckBox.isSelected != settings.mcpDedupEnabled ||
-            perfLoggingCheckBox.isSelected != settings.perfLoggingEnabled
+            perfLoggingCheckBox.isSelected != settings.perfLoggingEnabled ||
+            formatCombo.selectedIndex != formatIndexFromSetting(settings.selectionFormat)
     }
 
     /**
@@ -79,6 +86,7 @@ class PiConfigurable(private val project: Project) : Configurable {
         settings.mcpEnabled = mcpCheckBox.isSelected
         settings.mcpDedupEnabled = mcpDedupCheckBox.isSelected
         settings.perfLoggingEnabled = perfLoggingCheckBox.isSelected
+        settings.selectionFormat = if (formatCombo.selectedIndex == 0) "" else SelectionFormat.GITHUB_ANCHOR.name
         pathField.text = trimmed
         mcpCheckBox.isSelected = settings.mcpEnabled
         mcpDedupCheckBox.isSelected = settings.mcpDedupEnabled
@@ -103,5 +111,11 @@ class PiConfigurable(private val project: Project) : Configurable {
         mcpCheckBox.isSelected = settings.mcpEnabled
         mcpDedupCheckBox.isSelected = settings.mcpDedupEnabled
         perfLoggingCheckBox.isSelected = settings.perfLoggingEnabled
+        formatCombo.selectedIndex = formatIndexFromSetting(settings.selectionFormat)
+    }
+
+    /** 将 selectionFormat 持久化值映射为下拉框索引:空串/"COLON_LINE"→0, "GITHUB_ANCHOR"→1 */
+    private fun formatIndexFromSetting(raw: String): Int {
+        return if (raw == SelectionFormat.GITHUB_ANCHOR.name) 1 else 0
     }
 }
