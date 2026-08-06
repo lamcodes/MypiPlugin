@@ -6,7 +6,7 @@ MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Rework
 
 ## 特性
 
-- 🚀 **一键注入选区定位**:`Ctrl+Alt+;` 把当前选区/光标位置以 `@相对路径#L起-止行` 形式填入 pi 终端输入行(**只填不发送**,留给你补问题)
+- 🚀 **一键注入选区定位**:`Ctrl+Alt+;` 把当前选区/光标位置填入 pi 终端输入行(**只填不发送**,留给你补问题);格式可在 Settings → Tools → Pi 切换(默认冒号风格 `path:行号`,也可选 GitHub 风格 `@path#L行号`)
 - 🖥️ **复用内置终端跑 pi**:点右侧 Pi 图标即在 IDE 终端启动 pi,无需自建面板、无需 RPC 协议;pi 跑在项目目录,作为 coding agent 能自行读取项目文件
 - 🎯 **焦点自动接力**:注入成功后焦点自动落到 pi 终端输入区,直接打字补问题 + 回车,无需手动切窗口
 - ♻️ **稳定重启**:手动退出 pi 后再点 Pi 图标会自动重启新会话(每次点图标都触发,不止首次)
@@ -86,8 +86,8 @@ cd MypiPlugin
 注入的内容形如:
 
 ```
-@src/main/java/com/x/UserService.java#L10-20   # 有选区:@相对路径#L起始行-结束行(1-based)
-@src/main/java/com/x/UserService.java#L42       # 无选区:@相对路径#L光标行号
+src/main/java/com/x/UserService.java:10-20      # 有选区(冒号格式,默认):路径:起始行-结束行(1-based)
+src/main/java/com/x/UserService.java:42          # 无选区(冒号格式,默认):路径:光标行号
 ```
 
 > **为什么只发定位不发代码?** pi 在项目目录下作为 coding agent 运行,能自行读取项目文件;插件只发定位串,保持 pi 输入行简洁,你补一句问题(如"这段为什么慢")直接回车即可。
@@ -103,6 +103,7 @@ cd MypiPlugin
 | 配置 | 默认 | 说明 |
 |---|---|---|
 | pi 可执行路径 | 空(用 PATH) | pi 的绝对路径;留空则从系统 PATH 查找 |
+| 选区格式 | 冒号风格 | 注入定位串的格式;可选"冒号风格 (path:行号)"或"GitHub 风格 (@path#L行号)" |
 | 启用 IDE MCP 集成 | 开 | 启动 Pi 时自动注入 IDEA MCP Server(需 IDEA MCP 可用),让 Pi 获得读文件/搜代码/构建/调试等工具(IDEA 2025.2+) |
 | 开启去重检测 | 开 | 若 Pi 已通过 claude-code 等 import 获得 IDEA MCP,则跳过重复注入,避免 mcp.json 出现重复条目 |
 | 开启性能计时日志 | 关 | 各启动阶段耗时输出到 idea.log,排查启动慢用 |
@@ -162,9 +163,9 @@ src/main/kotlin/com/mypi/plugin/
 ├── PiMcpConfigService.kt       # 把 IDEA MCP Server 注入 Pi 的 mcp.json(反射访问、claude-code 去重、原子写入)
 ├── PiToolWindowFactory.kt      # 右侧 Pi 工具窗工厂(状态 Label 兜底,启动逻辑在 Service)
 ├── SendSelectionAction.kt      # Ctrl+Alt+; 注入动作(有选区发范围,无选区发单行定位)
-├── SelectionContextBuilder.kt  # 选区 → "@相对路径#L行号" 定位串构造(纯逻辑,零平台依赖)
+├── SelectionContextBuilder.kt  # 选区 → 定位串构造(纯逻辑,零平台依赖);支持 COLON_LINE / GITHUB_ANCHOR 两种行锚点格式
 ├── PiSettings.kt               # 持久化设置:pi 路径 + MCP/去重/性能日志开关(PersistentStateComponent)
-└── PiConfigurable.kt           # Settings → Tools → Pi 配置页(路径框 + 3 个开关)
+└── PiConfigurable.kt           # Settings → Tools → Pi 配置页(路径框 + 格式下拉框 + 3 个开关)
 src/main/resources/META-INF/plugin.xml   # 插件声明(ToolWindow / Action / Configurable + 3 个 depends)
 src/test/kotlin/com/mypi/plugin/         # 测试分层见下表
 ```
@@ -173,7 +174,7 @@ src/test/kotlin/com/mypi/plugin/         # 测试分层见下表
 
 | 文件 | 层级 | 覆盖 |
 |---|---|---|
-| `SelectionContextBuilderTest` | Tier1 纯逻辑(JUnit5) | 定位串拼接(6 用例) |
+| `SelectionContextBuilderTest` | Tier1 纯逻辑(JUnit5) | 定位串拼接,覆盖 COLON_LINE / GITHUB_ANCHOR 双格式(14 用例) |
 | `PiSettingsStateTest` | Tier1 纯逻辑(JUnit5) | `piPath` 持久化状态(4 用例) |
 | `SendSelectionActionTest` | Tier2 平台(`BasePlatformTestCase`) | `update` 启用逻辑(3 用例) |
 | `PiConfigurableTest` | Tier2 平台 | 配置页与 `piPath` roundtrip(3 用例) |
