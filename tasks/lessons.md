@@ -88,3 +88,24 @@
 **预防规则**:
 - 新 workflow 首次引入后,**先把含 workflow 文件的 commit 单独 push,再打 tag push**;或删 tag 重新打(`git tag -d` → `git push origin :refs/tags` → 重打重推),第二次 push 时 workflow 已注册,能正常触发。
 - CI 零触发排查顺序:① `actions/workflows` 看 `state: active`(排除语法错/被禁) → ② `actions/runs` 看 `total_count`(看有没有事件到达) → ③ 若 active 但 runs=0,优先怀疑"首次引入未注册"或 tag/分支名不匹配 `on:` 触发器。
+
+## 插件描述单一真相源 + CHANGELOG 是发版硬依赖(MypiPlugin 发版文档治理)
+
+**错误模式**:插件描述在多处重复维护(`plugin.xml` 一份、`release.yml` 里 `updatePlugins.xml` 硬编码一份),改行为时只改一处 → 漂移。实测 v0.2.0 发版时三处描述全不一致:实际行为 `@path:行号`、`plugin.xml` 写 "默认 path:行号"(缺 `@`)、`release.yml` 还写 "@相对路径#L行号"(旧版)。根因是"不该有两处"而非"忘了改两处"。
+
+**踩坑实例**(MypiPlugin,2026-08-06):
+- v0.2.0 加 `@` 前缀(hotfix)漏改 `plugin.xml` description;Task 6 改描述漏改 `release.yml:59` 硬编码。
+- `generate_release_notes: true` 对 main 直推(无 PR)项目几乎无效,Release body 只有一行 compare 链接,团队成员看不出更新内容。
+
+**根治措施**(已在 release.yml 固化,2026-08-06):
+- `release.yml` 用 sed 从 `plugin.xml` 提取 CDATA description 填进 `updatePlugins.xml`,**plugin.xml 成为唯一描述真相源**。
+- `release.yml` 用 awk 从 `CHANGELOG.md` 按 `## [版本号]` 提取对应段作为 Release body;**段缺失则 `exit 1` fail fast**,强制发版前写 CHANGELOG。
+- 本地验证过的提取命令(发版改造时可复用):
+  - `sed -n '/<description><!\[CDATA\[/,/]]><\/description>/{//!p;}' src/main/resources/META-INF/plugin.xml`
+  - `awk -v v="$VERSION" '/^## \[/{p=index($0,"["v"]")} p&&/^## \[/&&!index($0,"["v"]"){p=0} p' CHANGELOG.md`
+
+**预防规则**:
+- 改插件描述**只改 `plugin.xml` 一处**,禁止在 `release.yml` 重复硬编码 description。
+- 发版前**必须**在 `CHANGELOG.md` 顶部补 `## [版本号] - YYYY-MM-DD` 段,否则 CI fail fast。发版流程见 README「发版流程」。
+- `generate_release_notes: true` 只对 PR-driven 工作流有效;main 直推项目靠 CHANGELOG 提取,别指望它生成可用 notes。
+
