@@ -16,6 +16,8 @@ import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentManagerEvent
 import com.intellij.ui.content.ContentManagerListener
 import java.io.File
+import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * inject 结果的密封类型:让调用方(SendSelectionAction)用 when 穷举分支处理,
@@ -34,9 +36,9 @@ sealed interface InjectResult {
  * Project 级服务:管理"插件专属 pi 终端"——用 Reworked Terminal 跑 pi,并提供选区注入入口。
  *
  * 职责:
- *  - init 监听 Pi 工具窗显示:每次点 Pi 图标 → [openPi](pi 已开则聚焦终端,未开则启动新 pi),
+ *  - init 监听 Pi 工具窗显示:每次点 Pi 图标 → [openPiAsync](pi 已开则聚焦终端,未开则启动新 pi),
  *    成功后隐藏右侧 Pi 面板。解决哥反馈的"手动退出 pi 后再点图标无法重启"。
- *  - [openPi]:预检 pi 可执行 → [TerminalToolWindowTabsManager] 建标题 "Pi" 的 tab → 持有 [TerminalView]
+ *  - [openPiAsync]:后台预检 pi 可执行 → [TerminalToolWindowTabsManager] 建标题 "Pi" 的 tab → 持有 [TerminalView]
  *    + [activateTerminal] 激活底部 Terminal 工具窗。
  *  - [inject]:向 pi 终端"只填不发送"文本(createSendTextBuilder,不调 shouldExecute)。
  *  - 监听 tab 关闭清引用 + 通知面板。
@@ -51,18 +53,19 @@ class PiTerminalService(val project: Project) : Disposable {
 
     init {
         // 监听 Pi 工具窗"被显示"(每次点 Pi 图标都触发,不止首次)。
-        // openPi 内部:pi 已开→聚焦终端;未开→启动新 pi。成功才隐藏 Pi 面板(失败保留显示错误)。
+        // openPiAsync 内部:pi 已开→聚焦终端;未开→启动新 pi。成功才隐藏 Pi 面板(失败保留显示错误)。
         project.messageBus.connect(this).subscribe(
             ToolWindowManagerListener.TOPIC,
             object : ToolWindowManagerListener {
                 override fun toolWindowShown(tw: ToolWindow) {
                     if (tw.id != "Pi") return
                     // invokeLater 不可省:toolWindowShown 在平台"显示工具窗"流程中同步触发,
-                    // 此处若直接 openPi(建终端 tab + 激活)会与显示流程重入/抢焦点;
+                    // 此处若直接 openPiAsync(建终端 tab + 激活)会与显示流程重入/抢焦点;
                     // 推迟到当前 EDT 事件结束后执行,确保 service init 已完成、显示流程已收尾。
                     ApplicationManager.getApplication().invokeLater {
-                        val err = openPi()
-                        if (err.isEmpty()) tw.hide(null)
+                        openPiAsync { err ->
+                            if (err.isEmpty()) tw.hide(null)
+                        }
                     }
                 }
             }
@@ -75,6 +78,12 @@ class PiTerminalService(val project: Project) : Disposable {
     /** 当前 pi 终端的 TerminalView(注入入口)。 */
     @Volatile private var piView: TerminalView? = null
 
+    /** 是否正在后台执行启动前预检/建 Tab,用 CAS 防止并发调用重复建 Tab。 */
+    private val opening = AtomicBoolean(false)
+
+    /** 当前启动任务句柄,项目销毁时取消,避免后台任务继续操作已销毁项目。 */
+    @Volatile private var openingTask: Future<*>? = null
+
     /**
      * 状态变化回调:文本状态("未启动"/"已就绪"/"启动失败:..."/"注入失败:...")。
      * 可能在 EDT 或终端线程触发,UI 侧需 invokeLater 切回 EDT 更新 Label。
@@ -85,64 +94,136 @@ class PiTerminalService(val project: Project) : Disposable {
     fun hasOpen(): Boolean = piView != null
 
     /**
-     * 启动 pi 终端。单一会话:已开则聚焦 + 激活终端,不重开;未开则预检后建新 tab。
-     * 必须在 EDT 调用(createTabBuilder/createTab 标注 @RequiresEdt)。
+     * 异步启动 pi 终端。单一会话:已开则聚焦 + 激活终端,不重开;未开则后台预检后建新 tab。
+     *
+     * 文件 IO/反射/PATH 扫描放到后台线程,避免阻塞 EDT;只有创建 Terminal Tab 切回 EDT
+     * (createTabBuilder/createTab 标注 @RequiresEdt)。
      *
      * 新建 Pi 前会先注入 IDE MCP Server 连接信息([PiMcpConfigService.injectIdeMcpServer]),
      * 让 Pi 启动后自动获得 read_file / search / build / debug 等工具。
      * 已开时跳过注入(Pi 运行中改配置不生效,需重启)。
      *
-     * @return 错误信息;空串表示成功
+     * @param onResult 在 EDT 回调启动结果;空串表示成功
      */
-    fun openPi(): String {
+    fun openPiAsync(onResult: (String) -> Unit = {}) {
+        val app = ApplicationManager.getApplication()
+        if (!app.isDispatchThread) {
+            // 入口可能被其它调用方从后台线程触发,先切到 EDT 处理终端状态和焦点操作。
+            app.invokeLater { openPiAsync(onResult) }
+            return
+        }
+
         val perfLog = PiSettings.getInstance(project).perfLoggingEnabled
         val totalStart = if (perfLog) System.currentTimeMillis() else 0
         if (piView != null) { // 单一会话:已开则聚焦 + 激活终端,不重复建
             focusAndActivatePi()
-            return ""
+            onResult("")
+            return
+        }
+        if (!opening.compareAndSet(false, true)) {
+            onResult("正在启动 Pi...")
+            return
         }
 
-        // 新建 Pi 前注入 IDE MCP Server 连接信息(让 Pi 获得 IDE 工具)
-        val injectStart = if (perfLog) System.currentTimeMillis() else 0
-        injectMcpConfig()
-        if (perfLog) {
-            logger.info("openPi: injectMcpConfig 耗时 ${System.currentTimeMillis() - injectStart}ms")
-        }
+        try {
+            openingTask = app.executeOnPooledThread {
+                if (project.isDisposed || Thread.currentThread().isInterrupted) {
+                    opening.set(false)
+                    openingTask = null
+                    return@executeOnPooledThread
+                }
+                try {
+                    // —— 以下均在后台线程执行,不做任何 EDT/UI 操作 ——
+                    val injectStart = if (perfLog) System.currentTimeMillis() else 0
+                    injectMcpConfig()
+                    if (project.isDisposed || Thread.currentThread().isInterrupted) {
+                        opening.set(false)
+                        openingTask = null
+                        return@executeOnPooledThread
+                    }
+                    if (perfLog) {
+                        logger.info("openPi: injectMcpConfig 耗时 ${System.currentTimeMillis() - injectStart}ms")
+                    }
 
-        val resolveStart = if (perfLog) System.currentTimeMillis() else 0
-        val piExe = resolvePiExecutable() ?: run {
-            val msg = "启动失败:未找到 pi,请在 Settings→Tools→Pi 配置路径"
-            notify(msg)
-            return msg
-        }
-        if (perfLog) {
-            logger.info("openPi: resolvePiExecutable 耗时 ${System.currentTimeMillis() - resolveStart}ms, piExe=$piExe")
-        }
+                    val resolveStart = if (perfLog) System.currentTimeMillis() else 0
+                    val piExe = resolvePiExecutable()
+                    if (perfLog) {
+                        logger.info("openPi: resolvePiExecutable 耗时 ${System.currentTimeMillis() - resolveStart}ms, piExe=$piExe")
+                    }
 
-        val createStart = if (perfLog) System.currentTimeMillis() else 0
-        return runCatching {
-            val manager = TerminalToolWindowTabsManager.getInstance(project)
-            val tab = manager.createTabBuilder()
-                .tabName("Pi")
-                .workingDirectory(project.basePath ?: System.getProperty("user.dir"))
-                .shellCommand(listOf(piExe))
-                .createTab()
-            piTab = tab
-            piView = tab.view
-            registerCloseListener(tab.content)
-            activateTerminal()
-            if (perfLog) {
-                logger.info("openPi: createTab+activate 耗时 ${System.currentTimeMillis() - createStart}ms, 总耗时 ${System.currentTimeMillis() - totalStart}ms")
+                    app.invokeLater {
+                        opening.set(false)
+                        openingTask = null
+                        if (project.isDisposed) {
+                            onResult("项目已关闭")
+                            return@invokeLater
+                        }
+                        // 后台预检期间可能已被其它路径打开(例如另一个点击事件)
+                        if (piView != null) {
+                            focusAndActivatePi()
+                            onResult("")
+                            return@invokeLater
+                        }
+                        if (piExe == null) {
+                            val msg = "启动失败:未找到 pi,请在 Settings→Tools→Pi 配置路径"
+                            notify(msg)
+                            onResult(msg)
+                            return@invokeLater
+                        }
+
+                        val createStart = if (perfLog) System.currentTimeMillis() else 0
+                        val result = runCatching {
+                            val manager = TerminalToolWindowTabsManager.getInstance(project)
+                            val tab = manager.createTabBuilder()
+                                .tabName("Pi")
+                                .workingDirectory(project.basePath ?: System.getProperty("user.dir"))
+                                .shellCommand(listOf(piExe))
+                                .createTab()
+                            piTab = tab
+                            piView = tab.view
+                            registerCloseListener(tab.content)
+                            activateTerminal()
+                            if (perfLog) {
+                                logger.info("openPi: createTab+activate 耗时 ${System.currentTimeMillis() - createStart}ms, 总耗时 ${System.currentTimeMillis() - totalStart}ms")
+                            }
+                            notify("已就绪")
+                            ""
+                        }.getOrElse { e ->
+                            if (perfLog) {
+                                logger.warn("openPi: createTab 失败耗时 ${System.currentTimeMillis() - createStart}ms, 总耗时 ${System.currentTimeMillis() - totalStart}ms", e)
+                            }
+                            val msg = "启动失败:${e.message ?: e.toString()}"
+                            notify(msg)
+                            msg
+                        }
+                        onResult(result)
+                    }
+                } catch (e: Exception) {
+                    if (project.isDisposed || Thread.currentThread().isInterrupted) {
+                        opening.set(false)
+                        openingTask = null
+                        return@executeOnPooledThread
+                    }
+                    logger.warn("openPi: 后台预检失败", e)
+                    app.invokeLater {
+                        opening.set(false)
+                        openingTask = null
+                        if (project.isDisposed) {
+                            return@invokeLater
+                        }
+                        val msg = "启动失败:${e.message ?: e.toString()}"
+                        notify(msg)
+                        onResult(msg)
+                    }
+                }
             }
-            notify("已就绪")
-            ""
-        }.getOrElse { e ->
-            if (perfLog) {
-                logger.warn("openPi: createTab 失败耗时 ${System.currentTimeMillis() - createStart}ms, 总耗时 ${System.currentTimeMillis() - totalStart}ms", e)
-            }
+        } catch (e: Exception) {
+            opening.set(false)
+            openingTask = null
+            logger.warn("openPi: 无法提交后台任务", e)
             val msg = "启动失败:${e.message ?: e.toString()}"
             notify(msg)
-            msg
+            onResult(msg)
         }
     }
 
@@ -247,6 +328,10 @@ class PiTerminalService(val project: Project) : Disposable {
     }
 
     override fun dispose() {
+        // 先取消后台预检,再清理终端引用,避免项目销毁后继续写用户级配置或回调 UI。
+        openingTask?.cancel(true)
+        openingTask = null
+        opening.set(false)
         val tab = piTab
         piTab = null
         piView = null

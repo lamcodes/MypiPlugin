@@ -56,6 +56,14 @@ class SelectionContextBuilderTest {
         )
     }
 
+    @Test
+    fun `COLON_LINE Windows 绝对路径保留盘符并使用末尾行号`() {
+        assertEquals(
+            "@C:/work/shared/Config.kt:10",
+            SelectionContextBuilder.build("C:/work/shared/Config.kt", 10, 10, SelectionFormat.COLON_LINE)
+        )
+    }
+
     // ── 默认格式(无 format 参数)= COLON_LINE ──
 
     @Test

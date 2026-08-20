@@ -35,6 +35,9 @@ class PiMcpConfigService(private val project: Project) {
      * 去重逻辑：如果 Pi 已通过 imports(如 claude-code)获得了 IDEA MCP,则跳过注入,
      * 避免 mcpServers 中出现两个指向同一 IDEA MCP 的条目。
      *
+     * 仅在读改写临界区加全局锁，避免多个 Project/窗口并发读写同一个用户级 mcp.json；
+     * 反射和去重读取不持锁，避免无关操作阻塞其它 Project。
+     *
      * @return [InjectResult] 注入结果，调用方可据此决定是否提示用户
      */
     fun injectIdeMcpServer(): InjectResult {
@@ -69,7 +72,8 @@ class PiMcpConfigService(private val project: Project) {
         // 4. 写入 Pi 的 mcp.json
         val t3 = if (perfLog) System.currentTimeMillis() else 0
         return try {
-            val changed = writePiMcpConfig(sseUrl)
+            // 只把 mcp.json 的读-改-写放入锁内,缩短跨 Project 的等待时间。
+            val changed = synchronized(lock) { writePiMcpConfig(sseUrl) }
             if (perfLog) {
                 logger.info("injectIdeMcpServer: writePiMcpConfig 耗时 ${System.currentTimeMillis() - t3}ms, changed=$changed, 总耗时 ${System.currentTimeMillis() - t0}ms")
             }
@@ -93,14 +97,12 @@ class PiMcpConfigService(private val project: Project) {
         val piConfig = File(System.getProperty("user.home"), PI_MCP_CONFIG_PATH)
         if (!piConfig.exists()) return false
 
-        val config = runCatching {
-            Json.parseToJsonElement(piConfig.readText()).jsonObject
-        }.getOrNull() ?: return false
+        val config = readJsonObjectOrNull(piConfig) ?: return false
 
-        // 检查 imports 列表
-        val imports = config["imports"]?.jsonArray ?: return false
+        // 检查 imports 列表；对格式异常保持宽容，只跳过无法识别的条目
+        val imports = config["imports"] as? JsonArray ?: return false
         for (importEntry in imports) {
-            val importKind = importEntry.jsonPrimitive.content
+            val importKind = (importEntry as? JsonPrimitive)?.contentOrNull ?: continue
             if (importKind == "claude-code") {
                 if (claudeCodeHasIdeaMcp(sseUrl)) return true
             }
@@ -123,16 +125,15 @@ class PiMcpConfigService(private val project: Project) {
         // 从 SSE URL 提取 host:port 用于匹配(忽略路径差异 /sse vs /stream)
         val ideaHostPort = extractHostPort(sseUrl) ?: return false
 
-        val config = runCatching {
-            Json.parseToJsonElement(claudeConfig.readText()).jsonObject
-        }.getOrNull() ?: return false
+        val config = readJsonObjectOrNull(claudeConfig) ?: return false
 
         // Claude Code 的 mcpServers 在顶层
-        val servers = config["mcpServers"]?.jsonObject ?: return false
+        val servers = config["mcpServers"] as? JsonObject ?: return false
         for ((_, serverValue) in servers) {
-            val server = serverValue.jsonObject
+            val server = serverValue as? JsonObject ?: continue
             // 检查 url 类型的 server
-            val url = server["url"]?.jsonPrimitive?.content ?: continue
+            val urlElement = server["url"] as? JsonPrimitive ?: continue
+            val url = urlElement.contentOrNull ?: continue
             val hostPort = extractHostPort(url) ?: continue
             if (hostPort == ideaHostPort) {
                 if (perfLog) logger.info("claudeCodeHasIdeaMcp: 匹配成功 (${System.currentTimeMillis() - t0}ms)")
@@ -157,15 +158,21 @@ class PiMcpConfigService(private val project: Project) {
      *
      * @return true 表示有实际移除；false 表示文件不存在或无 intellij 条目
      */
-    fun removeIdeMcpServer(): Boolean {
+    fun removeIdeMcpServer(): Boolean = synchronized(lock) {
+        removeIdeMcpServerLocked()
+    }
+
+    private fun removeIdeMcpServerLocked(): Boolean {
         val piConfig = File(System.getProperty("user.home"), PI_MCP_CONFIG_PATH)
         if (!piConfig.exists()) return false
 
-        val existingConfig = runCatching {
-            Json.parseToJsonElement(piConfig.readText()).jsonObject
-        }.getOrDefault(buildJsonObject { })
+        // 文件存在但解析失败时不贸然覆盖，避免把用户已有配置清空
+        val existingConfig = readJsonObjectOrNull(piConfig) ?: run {
+            logger.warn("removeIdeMcpServer: ${piConfig.path} 解析失败, 已跳过清理")
+            return false
+        }
 
-        val existingServers = existingConfig["mcpServers"]?.jsonObject ?: return false
+        val existingServers = existingConfig["mcpServers"] as? JsonObject ?: return false
         if (!existingServers.containsKey("intellij")) return false
 
         // 移除 intellij 条目，保留其它所有 server
@@ -212,19 +219,14 @@ class PiMcpConfigService(private val project: Project) {
     private fun writePiMcpConfig(sseUrl: String): Boolean {
         val piConfig = File(System.getProperty("user.home"), PI_MCP_CONFIG_PATH)
 
-        // 读取现有配置（如果存在）
-        val existingConfig = if (piConfig.exists()) {
-            runCatching {
-                Json.parseToJsonElement(piConfig.readText()).jsonObject
-            }.getOrDefault(buildJsonObject { })
-        } else {
-            buildJsonObject { }
-        }
+        // 读取现有配置；文件损坏时抛出异常，由调用方转为 Failed，避免静默清空
+        val existingConfig = readJsonObjectForWrite(piConfig)
 
         // 检查是否已配置且 URL 未变（避免无意义写入）
-        val existingServers = existingConfig["mcpServers"]?.jsonObject
-        val existingIntellij = existingServers?.get("intellij")?.jsonObject
-        if (existingIntellij?.get("url")?.jsonPrimitive?.content == sseUrl) {
+        val existingServers = existingConfig["mcpServers"] as? JsonObject
+        val existingIntellij = existingServers?.get("intellij") as? JsonObject
+        val existingUrl = existingIntellij?.get("url") as? JsonPrimitive
+        if (existingUrl?.contentOrNull == sseUrl) {
             return false // 已配置且未变化
         }
 
@@ -255,10 +257,14 @@ class PiMcpConfigService(private val project: Project) {
      * 避免 Pi 或其它进程读到写了一半的中间状态。
      */
     private fun atomicWrite(target: File, config: JsonObject) {
-        target.parentFile?.mkdirs()
-        val tempFile = File(target.parentFile, "${target.name}.tmp")
+        val parentDir = target.parentFile ?: target.absoluteFile.parentFile ?: File(".")
+        parentDir.mkdirs()
+        val tempFile = Files.createTempFile(parentDir.toPath(), "${target.name}.", ".tmp").toFile()
         try {
-            tempFile.writeText(prettyJson.encodeToString(JsonObject.serializer(), config))
+            tempFile.writeText(
+                prettyJson.encodeToString(JsonObject.serializer(), config),
+                Charsets.UTF_8
+            )
             Files.move(
                 tempFile.toPath(),
                 target.toPath(),
@@ -268,9 +274,37 @@ class PiMcpConfigService(private val project: Project) {
         } catch (e: Exception) {
             // 原子移动在某些文件系统(如某些网络挂载)不支持,降级为普通写入
             logger.debug("原子写入失败,降级为普通写入: ${e.message}")
-            target.writeText(prettyJson.encodeToString(JsonObject.serializer(), config))
+            target.writeText(
+                prettyJson.encodeToString(JsonObject.serializer(), config),
+                Charsets.UTF_8
+            )
         } finally {
-            runCatching { tempFile.delete() }
+            runCatching { Files.deleteIfExists(tempFile.toPath()) }
+        }
+    }
+
+    /**
+     * 读取 JSON 文件为 [JsonObject]；文件不存在返回 null，解析失败返回 null。
+     * 用于“可跳过/只读”场景（去重检测、移除配置），避免因格式异常中断主流程。
+     */
+    private fun readJsonObjectOrNull(file: File): JsonObject? {
+        if (!file.exists()) return null
+        return runCatching {
+            Json.parseToJsonElement(file.readText(Charsets.UTF_8)) as? JsonObject
+        }.getOrNull()
+    }
+
+    /**
+     * 读取 JSON 文件为 [JsonObject]；文件不存在返回空对象，解析失败抛出异常。
+     * 用于“写入前读取”，宁可让调用方看到 Failed，也不静默清空用户已有配置。
+     */
+    private fun readJsonObjectForWrite(file: File): JsonObject {
+        if (!file.exists()) return buildJsonObject { }
+        return try {
+            Json.parseToJsonElement(file.readText(Charsets.UTF_8)) as? JsonObject
+                ?: throw IllegalStateException("mcp.json 根节点不是 JSON Object")
+        } catch (e: Exception) {
+            throw IllegalStateException("解析 ${file.path} 失败: ${e.message}", e)
         }
     }
 
@@ -290,6 +324,13 @@ class PiMcpConfigService(private val project: Project) {
 
     companion object {
         fun getInstance(project: Project): PiMcpConfigService = project.service()
+
+        /**
+         * 用户级 mcp.json 的全局写锁。
+         * 虽然本服务是 Project 级，但多个 Project 会同时操作同一个文件，因此锁必须放在
+         * companion/Application 级，而不是实例字段上。
+         */
+        private val lock = Any()
 
         /** 格式化 JSON 实例（复用，避免每次创建） */
         private val prettyJson = Json { prettyPrint = true }

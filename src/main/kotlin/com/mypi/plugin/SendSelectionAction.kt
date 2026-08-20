@@ -17,10 +17,10 @@ import com.intellij.openapi.vfs.VirtualFile
  *  - 有选区 → [SelectionContextBuilder.build] 产出定位串(选区起止行)。
  *  - 无选区 → [SelectionContextBuilder.build] 产出定位串(光标行,传 caretLine 两次)。
  *
- * 行锚点格式由设置项 [PiSettings.selectionFormat] 决定:COLON_LINE 产出 "path:行号",
+ * 行锚点格式由设置项 [PiSettings.selectionFormat] 决定:COLON_LINE 产出 "@path:行号",
  * GITHUB_ANCHOR 产出 "@path#L行号";空串或非法值回退 COLON_LINE。
  *
- * 路径经 [resolvePath] 解析为"相对项目根"(与 pi 启动的工作目录同源);项目外文件降级为裸文件名。
+ * 路径经 [resolvePath] 解析为"相对项目根"(与 pi 启动的工作目录同源);项目外本地文件使用绝对路径。
  * 注入经 [PiTerminalService.inject];若 pi 终端未开,弹框提示去点启动按钮(决策#10)。
  */
 class SendSelectionAction : AnAction() {
@@ -63,8 +63,8 @@ class SendSelectionAction : AnAction() {
     /**
      * 解析文件路径为"相对项目根"(与 pi 启动工作目录 project.basePath 同源,pi 视角等价于绝对路径)。
      * 用 [VfsUtilCore.getRelativePath](全程 `/` 规范化),规避 Windows basePath 反斜杠与 file.path
-     * 正斜杠混用导致的字符串误判。算不出相对路径(项目外 / jar 内 / 临时文件 / 无项目根)时降级为
-     * 裸文件名,再降级"未知文件"。
+     * 正斜杠混用导致的字符串误判。项目内返回相对路径;项目外/无项目根/无法计算相对路径时
+     * 返回规范化绝对路径,避免同名文件只发裸文件名导致 Pi 无法唯一定位。
      *
      * 注:brief 原拟用 `ProjectUtil.guessProjectDir`,但该类所在 platform.ide 模块未被 IntelliJ
      * Platform Gradle Plugin 2.x 默认暴露给插件编译期 classpath;改用 core 层 [LocalFileSystem]
@@ -72,10 +72,16 @@ class SendSelectionAction : AnAction() {
      */
     private fun resolvePath(project: Project, file: VirtualFile?): String {
         if (file == null) return "未知文件"
-        val basePath = project.basePath ?: return file.name
-        val baseDir = LocalFileSystem.getInstance().findFileByPath(basePath) ?: return file.name
-        return VfsUtilCore.getRelativePath(file, baseDir, '/') ?: file.name
+        // jar:// 等非本地文件没有可供 Pi 访问的绝对文件系统路径,保留其虚拟路径。
+        if (!file.isInLocalFileSystem) return file.path
+        val basePath = project.basePath ?: return normalizePath(file.path)
+        val baseDir = LocalFileSystem.getInstance().findFileByPath(basePath)
+            ?: return normalizePath(file.path)
+        return VfsUtilCore.getRelativePath(file, baseDir, '/') ?: normalizePath(file.path)
     }
+
+    /** 将绝对路径统一为 Pi 可识别的正斜杠形式,避免 Windows 反斜杠干扰定位串解析。 */
+    private fun normalizePath(path: String): String = path.replace('\\', '/')
 
     /**
      * 将持久化的格式字符串解析为 [SelectionFormat] 枚举。

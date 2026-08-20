@@ -19,7 +19,7 @@ enum class SelectionFormat {
  *  - GITHUB_ANCHOR: `@<path>#L<行号>`,如 `@src/App.kt#L10-20`
  *  - 行号:单行 `15`;多行 `10-20`(仅首行带 L)
  *
- * path 由调用方(SendSelectionAction)解析为"相对项目根路径",项目外文件降级为裸文件名;此处原样透传。
+ * path 由调用方(SendSelectionAction)解析为"相对项目根路径",项目外本地文件使用规范化绝对路径;此处原样透传。
  *
  * 只发定位、不发代码内容:pi 在项目目录跑(终端方案),作为 coding agent 能自行读取项目文件,
  * 只发定位可保持 pi 输入行简洁;加 @/L 或冒号前缀让 pi 更可靠识别为文件引用。
@@ -29,7 +29,7 @@ object SelectionContextBuilder {
     /**
      * 产出 pi 注入串。
      *
-     * @param path      已解析的文件路径(相对项目根,或降级后的裸文件名),原样透传
+     * @param path      已解析的文件路径(相对项目根,或项目外本地文件的绝对路径),原样透传
      * @param startLine 起始行(1-based)
      * @param endLine   结束行(1-based);与 startLine 相同时合并为单行号
      * @param format    行锚点格式,默认 [SelectionFormat.COLON_LINE]

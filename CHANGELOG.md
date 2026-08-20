@@ -4,6 +4,16 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号语义遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.2] - 2026-08-20
+
+### Fixed
+- 修复 Pi 异步启动的 EDT 线程边界、重复启动竞态和项目关闭后的后台任务残留问题。
+- 项目外本地文件使用规范化绝对路径,避免同名文件导致定位歧义。
+- 收紧多项目 MCP 配置写锁范围,并增强损坏 JSON 的保护性处理。
+
+### Changed
+- 冒号风格定位串统一为 `@path:行号`,与 GitHub 风格 `@path#L行号`保持一致。
+
 ## [0.2.1] - 2026-08-06
 
 ### Fixed

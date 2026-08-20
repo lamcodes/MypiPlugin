@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在 Settings → Tools → Pi 增加选区格式下拉框,支持冒号格式(path:行号)和 GitHub 格式(@path#L行号)两种选项,默认冒号格式。
+**Goal:** 在 Settings → Tools → Pi 增加选区格式下拉框,支持冒号格式(@path:行号)和 GitHub 格式(@path#L行号)两种选项,默认冒号格式。
 
 **Architecture:** `SelectionFormat` 枚举定义两种格式策略;`SelectionContextBuilder.build()` 新增 format 参数按枚举分支拼串;`PiSettings` 持久化用户选择;`PiConfigurable` 加下拉框 UI;`SendSelectionAction` 读设置传枚举。纯逻辑无外部依赖。
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 默认格式: `COLON_LINE`(冒号风格 `path:行号`)
+- 默认格式: `COLON_LINE`(冒号风格 `@path:行号`)
 - 空配置串等价 `COLON_LINE`
 - `GITHUB_ANCHOR` 保持与旧版 `build(path, startLine, endLine)` 完全一致的输出
 - 下拉框位于路径输入框之下、MCP 开关之上
@@ -35,7 +35,7 @@ package com.mypi.plugin
 /**
  * 选区格式枚举:两种行锚点风格。
  *
- * COLON_LINE:    path:78 (单行) / path:78-85 (多行)
+ * COLON_LINE:    @path:78 (单行) / @path:78-85 (多行)
  * GITHUB_ANCHOR: @path#L78 (单行) / @path#L78-85 (多行)
  */
 enum class SelectionFormat {
@@ -47,11 +47,11 @@ enum class SelectionFormat {
  * 选区 → pi 终端注入的"定位串"构造器(纯逻辑,零 IntelliJ 依赖)。
  *
  * 产物根据 [format] 参数采用不同行锚点风格:
- *  - COLON_LINE: `<path>:<行号>`,如 `src/App.kt:10-20`
+ *  - COLON_LINE: `@<path>:<行号>`,如 `@src/App.kt:10-20`
  *  - GITHUB_ANCHOR: `@<path>#L<行号>`,如 `@src/App.kt#L10-20`
  *  - 行号:单行 `15`;多行 `10-20`(仅首行带 L)
  *
- * path 由调用方(SendSelectionAction)解析为"相对项目根路径",项目外文件降级为裸文件名;此处原样透传。
+ * path 由调用方(SendSelectionAction)解析为"相对项目根路径",项目外本地文件使用绝对路径;此处原样透传。
  *
  * 只发定位、不发代码内容:pi 在项目目录跑(终端方案),作为 coding agent 能自行读取项目文件,
  * 只发定位可保持 pi 输入行简洁;加 @/L 或冒号前缀让 pi 更可靠识别为文件引用。
@@ -61,7 +61,7 @@ object SelectionContextBuilder {
     /**
      * 产出 pi 注入串。
      *
-     * @param path      已解析的文件路径(相对项目根,或降级后的裸文件名),原样透传
+     * @param path      已解析的文件路径(相对项目根,或项目外本地文件的绝对路径),原样透传
      * @param startLine 起始行(1-based)
      * @param endLine   结束行(1-based);与 startLine 相同时合并为单行号
      * @param format    行锚点格式,默认 [SelectionFormat.COLON_LINE]
@@ -69,7 +69,7 @@ object SelectionContextBuilder {
     fun build(path: String, startLine: Int, endLine: Int, format: SelectionFormat = SelectionFormat.COLON_LINE): String {
         val lineSpec = if (startLine == endLine) "$startLine" else "$startLine-$endLine"
         return when (format) {
-            SelectionFormat.COLON_LINE -> "$path:$lineSpec"
+            SelectionFormat.COLON_LINE -> "@$path:$lineSpec"
             SelectionFormat.GITHUB_ANCHOR -> "@$path#L$lineSpec"
         }
     }
@@ -123,25 +123,25 @@ class SelectionContextBuilderTest {
     @Test
     fun `COLON_LINE 多行选区定位串 path 冒号 起止行`() {
         assertEquals(
-            "src/main/java/com/x/UserService.java:10-20",
+            "@src/main/java/com/x/UserService.java:10-20",
             SelectionContextBuilder.build("src/main/java/com/x/UserService.java", 10, 20, SelectionFormat.COLON_LINE)
         )
     }
 
     @Test
     fun `COLON_LINE 起止行相同时合并为单行`() {
-        assertEquals("a.kt:5", SelectionContextBuilder.build("a.kt", 5, 5, SelectionFormat.COLON_LINE))
+        assertEquals("@a.kt:5", SelectionContextBuilder.build("a.kt", 5, 5, SelectionFormat.COLON_LINE))
     }
 
     @Test
     fun `COLON_LINE 无选区传光标行两次产出单行定位`() {
-        assertEquals("Foo.java:42", SelectionContextBuilder.build("Foo.java", 42, 42, SelectionFormat.COLON_LINE))
+        assertEquals("@Foo.java:42", SelectionContextBuilder.build("Foo.java", 42, 42, SelectionFormat.COLON_LINE))
     }
 
     @Test
     fun `COLON_LINE 多点文件名原样保留`() {
         assertEquals(
-            "my.service.spec.ts:1-9",
+            "@my.service.spec.ts:1-9",
             SelectionContextBuilder.build("my.service.spec.ts", 1, 9, SelectionFormat.COLON_LINE)
         )
     }
@@ -149,13 +149,13 @@ class SelectionContextBuilderTest {
     @Test
     fun `COLON_LINE build 输出仅为定位串不含任何代码`() {
         val prompt = SelectionContextBuilder.build("App.kt", 1, 100, SelectionFormat.COLON_LINE)
-        assertEquals("App.kt:1-100", prompt)
+        assertEquals("@App.kt:1-100", prompt)
     }
 
     @Test
     fun `COLON_LINE 路径透传不改写分隔符`() {
         assertEquals(
-            "src/test/kotlin/App.kt:7",
+            "@src/test/kotlin/App.kt:7",
             SelectionContextBuilder.build("src/test/kotlin/App.kt", 7, 7, SelectionFormat.COLON_LINE)
         )
     }
@@ -164,12 +164,12 @@ class SelectionContextBuilderTest {
 
     @Test
     fun `默认格式为 COLON_LINE 多行`() {
-        assertEquals("Foo.kt:3-7", SelectionContextBuilder.build("Foo.kt", 3, 7))
+        assertEquals("@Foo.kt:3-7", SelectionContextBuilder.build("Foo.kt", 3, 7))
     }
 
     @Test
     fun `默认格式为 COLON_LINE 单行`() {
-        assertEquals("Foo.kt:3", SelectionContextBuilder.build("Foo.kt", 3, 3))
+        assertEquals("@Foo.kt:3", SelectionContextBuilder.build("Foo.kt", 3, 3))
     }
 
     // ── GITHUB_ANCHOR 格式(保持向后兼容) ──
@@ -243,7 +243,7 @@ git commit -m "feat: SelectionFormat 枚举 + build() 支持格式参数"
 在 `perfLoggingEnabled` 之后添加:
 
 ```kotlin
-    /** 选区格式:"COLON_LINE"=冒号风格(path:行号);"GITHUB_ANCHOR"=GitHub 风格(@path#L行号)。空串等价 COLON_LINE。 */
+    /** 选区格式:"COLON_LINE"=冒号风格(@path:行号);"GITHUB_ANCHOR"=GitHub 风格(@path#L行号)。空串等价 COLON_LINE。 */
     @Volatile
     var selectionFormat: String = ""
 ```
@@ -290,7 +290,7 @@ import javax.swing.JComboBox
 在 `perfLoggingCheckBox` 声明之后、`getDisplayName()` 之前添加:
 
 ```kotlin
-    internal val formatCombo = JComboBox(arrayOf("冒号风格 (path:行号)", "GitHub 风格 (@path#L行号)"))
+    internal val formatCombo = JComboBox(arrayOf("冒号风格 (@path:行号)", "GitHub 风格 (@path#L行号)"))
 ```
 
 - [ ] **Step 2: 在 createComponent() 中加入下拉框**
@@ -428,7 +428,7 @@ git commit -m "feat: SendSelectionAction 读取格式设置并传递 build()"
 
 - [ ] **Step 1: 更新 README.md 格式描述**
 
-Check inline: `@相对路径#L起-止行` → `路径:起-止行(默认) / @路径#L起-止行(GitHub 风格,可在设置中切换)`
+Check inline: `@相对路径#L起-止行` → `@路径:起-止行(默认) / @路径#L起-止行(GitHub 风格,可在设置中切换)`
 
 - [ ] **Step 2: 再次运行全部测试确认**
 
@@ -446,9 +446,9 @@ git commit -m "docs: README 更新选区格式描述,反映新增冒号格式选
 
 ### 验证清单
 
-- [ ] `SelectionContextBuilderTest` 14 个测试全部通过
-- [ ] 默认格式(不传 format)产出冒号格式 `path:行号`
-- [ ] `COLON_LINE` 显式传入产出 `path:行号`
+- [ ] `SelectionContextBuilderTest` 15 个测试全部通过
+- [ ] 默认格式(不传 format)产出冒号格式 `@path:行号`
+- [ ] `COLON_LINE` 显式传入产出 `@path:行号`
 - [ ] `GITHUB_ANCHOR` 显式传入产出 `@path#L行号`
 - [ ] PiConfigurable 下拉框默认选中"冒号风格"
 - [ ] 下拉框切换到 "GitHub 风格" 后 apply,重启后仍为 GitHub 风格

@@ -4,7 +4,7 @@
 
 ## 概述
 
-`SelectionContextBuilder` 当前固定输出 GitHub 行锚点格式(`@path#L行号`)。新增冒号格式(`path:行号`)选项，用户在 Settings → Tools → Pi 中通过下拉框选择默认格式。默认使用冒号格式。
+`SelectionContextBuilder` 当前固定输出 GitHub 行锚点格式(`@path#L行号`)。新增冒号格式(`@path:行号`)选项，用户在 Settings → Tools → Pi 中通过下拉框选择默认格式。默认使用冒号格式。
 
 ## 枚举
 
@@ -12,7 +12,7 @@
 
 | 枚举值 | 单行产物 | 多行产物 |
 |---|---|---|
-| `COLON_LINE` (默认) | `path:78` | `path:78-85` |
+| `COLON_LINE` (默认) | `@path:78` | `@path:78-85` |
 | `GITHUB_ANCHOR` | `@path#L78` | `@path#L78-85` |
 
 ## 变更点
@@ -21,7 +21,7 @@
 
 `build(path, startLine, endLine)` → `build(path, startLine, endLine, format: SelectionFormat = SelectionFormat.COLON_LINE)`。根据 `format` 分支:
 
-- `COLON_LINE`: `"$path:$lineSpec"` (lineSpec 同现逻辑: 单行 `"78"`, 多行 `"78-85"`)
+- `COLON_LINE`: `"@$path:$lineSpec"` (lineSpec 同现逻辑: 单行 `"78"`, 多行 `"78-85"`)
 - `GITHUB_ANCHOR`: `"@$path#L$lineSpec"` (现有行为)
 
 ### PiSettings.kt
@@ -31,7 +31,7 @@
 ### PiConfigurable.kt
 
 新增下拉框控件 `JComboBox<String>`，选项:
-- "冒号风格 (path:行号)"
+- "冒号风格 (@path:行号)"
 - "GitHub 风格 (@path#L行号)"
 
 位置: 路径输入框之下、MCP 开关之上。`isModified()`、`apply()`、`reset()` 同步处理。
