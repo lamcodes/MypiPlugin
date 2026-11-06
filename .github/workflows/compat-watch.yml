@@ -149,7 +149,14 @@ jobs:
             exit 0
           fi
           git commit -m "chore: 支持 IntelliJ IDEA ${NEW_VERSION}"
-          git push -u origin "$BRANCH"
+          # 幂等:上周的 PR 可能仍未合并,重跑时更新既有分支而不是失败(lease 需先 fetch 才有远端跟踪引用)
+          git fetch origin "$BRANCH" 2>/dev/null || true
+          git push origin "$BRANCH" --force-with-lease
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+          if [ "${EXISTING_PR}" != "0" ]; then
+            echo "::notice::已有 open PR(${EXISTING_PR} 个),已推送更新，跳过重复创建"
+            exit 0
+          fi
           gh pr create --base main --head "$BRANCH" \
             --title "chore: 支持 IntelliJ IDEA ${NEW_VERSION}" \
             --body "$(cat <<'EOF'
