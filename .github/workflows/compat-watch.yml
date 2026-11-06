@@ -1,0 +1,188 @@
+name: Weekly IDEA Compatibility Watch
+
+# 每周检测 JetBrains 正式版 IDEA:有新大版本则把兼容上限前移并跑双端 Plugin Verifier。
+# 通过 → 自动开 PR(由人 review、补 CHANGELOG、打 tag 发版);失败 → 自动开 Issue。
+# 与 release.yml 分工:本工作流只做"发现 + 验证 + 提案",绝不自动发版。
+on:
+  schedule:
+    - cron: '0 2 * * 1'   # UTC 周一 02:00 = 北京时间周一 10:00
+  workflow_dispatch:
+    inputs:
+      override_latest:
+        description: '强制检查的 IDEA 版本(如 2026.3;留空=取 JetBrains 最新正式版),用于提前验证 EAP 或演练'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: compat-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      # 查询 JetBrains 公开发布元数据并与当前兼容上限比对;无新版本时后续步骤全部跳过(正常成功路径)
+      - name: Detect latest IDEA release
+        id: detect
+        env:
+          OVERRIDE: ${{ inputs.override_latest }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE}" ]; then
+            NEW_VERSION="${OVERRIDE}"
+            NEW_BUILD=""
+          else
+            META=$(curl -fsSL 'https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=release')
+            NEW_VERSION=$(echo "$META" | jq -r '.IIU[0].version // empty')
+            NEW_BUILD=$(echo "$META" | jq -r '.IIU[0].build // empty')
+          fi
+          if [ -z "${NEW_VERSION}" ]; then
+            echo "::error::未能从 JetBrains API 解析最新 IDEA 版本"
+            exit 1
+          fi
+
+          # 平台构建号:API 直接给 263.7307.200;手动指定版本时按 IDEA 规则换算(年份两位*10+季度,2026.3 → 263)
+          if [ -n "${NEW_BUILD}" ]; then
+            NEW_MAJOR="${NEW_BUILD%%.*}"
+          else
+            YEAR="${NEW_VERSION%%.*}"
+            QUARTER="${NEW_VERSION##*.}"
+            NEW_MAJOR="$(( (YEAR % 100) * 10 + QUARTER ))"
+          fi
+
+          CURRENT_UNTIL=$(grep -E '^pluginUntilBuild=' gradle.properties | cut -d= -f2)
+          CURRENT_MAJOR="${CURRENT_UNTIL%%.*}"
+          echo "检测结果:最新 IDEA ${NEW_VERSION}(构建 ${NEW_MAJOR}) / 当前兼容上限 ${CURRENT_UNTIL}"
+
+          if [ "${NEW_MAJOR}" -le "${CURRENT_MAJOR}" ]; then
+            echo "无需升级兼容上限"
+            echo "needs_bump=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_bump=true" >> "$GITHUB_OUTPUT"
+            echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "major=${NEW_MAJOR}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump compatibility range
+        if: steps.detect.outputs.needs_bump == 'true'
+        env:
+          NEW_MAJOR: ${{ steps.detect.outputs.major }}
+          NEW_VERSION: ${{ steps.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          SINCE=$(grep -E '^platformVersion=' gradle.properties | cut -d= -f2)
+          # until-build 前移到新大版本;Verifier 目标保持"最低支持版 + 最新版"两端
+          sed -i -E "s/^pluginUntilBuild=.*/pluginUntilBuild=${NEW_MAJOR}.*/" gradle.properties
+          sed -i -E "s|^verifierIdeVersions=.*|verifierIdeVersions=${SINCE},${NEW_VERSION}|" gradle.properties
+          git --no-pager diff gradle.properties
+
+      # Verifier 需下载约 2.2 GB IDE 数据,缓存可把后续运行压到分钟级
+      - uses: actions/cache@v4
+        if: steps.detect.outputs.needs_bump == 'true'
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-verifier-${{ hashFiles('gradle.properties', 'build.gradle.kts') }}
+          restore-keys: gradle-verifier-
+
+      - name: Verify against both IDEs
+        id: verify
+        if: steps.detect.outputs.needs_bump == 'true'
+        continue-on-error: true
+        run: ./gradlew verifyPlugin
+
+      # 区分"真不兼容"与"环境失败":没有 verdict 报告 = 下载/网络/配置问题,不能报警成兼容性缺陷
+      - name: Classify verify failure
+        if: steps.detect.outputs.needs_bump == 'true' && steps.verify.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          # 报告结构(Verifier 1.411 实测):build/reports/pluginVerifier/<IDE>/plugins/<插件>/<版本>/verification-verdict.txt
+          # 内容形如 "Compatible. 4 usages of deprecated API. ..."
+          VERDICTS=$(ls build/reports/pluginVerifier/*/plugins/*/*/verification-verdict.txt 2>/dev/null || true)
+          if [ -z "$VERDICTS" ]; then
+            echo "::error::verifyPlugin 失败且无 verification-verdict.txt,按基础设施失败处理(网络/下载/配置),不创建 issue"
+            exit 1
+          fi
+          if grep -L '^Compatible' $VERDICTS | grep -q .; then
+            echo "REAL_INCOMPATIBILITY=true" >> "$GITHUB_ENV"
+          else
+            echo "::error::Verifier 判定均 Compatible 但任务失败,按环境异常处理"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: steps.detect.outputs.needs_bump == 'true'
+        with:
+          name: plugin-verifier-report
+          path: build/reports/pluginVerifier/
+          if-no-files-found: warn
+
+      - name: Create compatibility PR
+        if: steps.detect.outputs.needs_bump == 'true' && steps.verify.outcome == 'success'
+        env:
+          NEW_VERSION: ${{ steps.detect.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="chore/idea-compat-${NEW_VERSION}"
+          git checkout -B "$BRANCH"
+          git add gradle.properties
+          if git diff --cached --quiet; then
+            echo "::notice::gradle.properties 无实际变更,跳过 PR"
+            exit 0
+          fi
+          git commit -m "chore: 支持 IntelliJ IDEA ${NEW_VERSION}"
+          git push -u origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: 支持 IntelliJ IDEA ${NEW_VERSION}" \
+            --body "$(cat <<'EOF'
+          Plugin Verifier 已对最低支持版与新版本双端验证通过,本 PR 由每周兼容检测自动生成。
+
+          发版前请人工确认:
+          - [ ] review `gradle.properties` 的 `pluginUntilBuild` / `verifierIdeVersions`
+          - [ ] 更新 README「前置要求」的 IDE 版本范围
+          - [ ] 在 CHANGELOG.md 顶部补写发版版本段(发版流水线硬依赖)
+          - [ ] 合并后按「发版流程」打 tag
+          EOF
+          )"
+
+      - name: Create incompatibility issue
+        if: env.REAL_INCOMPATIBILITY == 'true'
+        env:
+          NEW_VERSION: ${{ steps.detect.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TITLE="IDEA ${NEW_VERSION} 二进制不兼容"
+          EXISTING=$(gh issue list --state open --search "${TITLE} in:title" --json number --jq 'length')
+          if [ "${EXISTING}" != "0" ]; then
+            echo "已有 ${EXISTING} 个同类 open issue,跳过创建"
+            exit 0
+          fi
+          gh issue create --title "${TITLE}" --body "$(cat <<'EOF'
+          Plugin Verifier 判定当前插件在最新 IDEA 正式版上二进制不兼容,发版前需修复。
+
+          处理步骤:
+          1. 下载本次 workflow 运行的 `plugin-verifier-report` 产物,定位报错的类/方法
+          2. 重点核对实验性 Terminal API(`PiTerminalService`)与 MCP 反射入口(`PiMcpConfigService`)
+          3. 修复后本地跑 `./gradlew verifyPlugin` 确认两端 Compatible
+          4. 再手动触发本工作流验证闭环
+          EOF
+          )"

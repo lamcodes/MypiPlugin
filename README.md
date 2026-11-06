@@ -148,7 +148,7 @@ cd MypiPlugin
 发版走 GitHub Actions 自动构建并发布到 Releases。打 tag 即触发:
 
 ```bash
-# 1. 更新版本号:改 build.gradle.kts 里的 version 与 intellijPlatform.pluginConfiguration.version
+# 1. 更新版本号:只改 gradle.properties 的 pluginVersion
 # 2. 在 CHANGELOG.md 顶部新增 '## [x.x.x] - YYYY-MM-DD' 段,写面向用户的更新说明
 # 3. 提交并打 tag
 git commit -am "release: x.x.x"
@@ -163,6 +163,32 @@ CI 会自动:构建插件 → 对 IDEA 2026.2/2026.3 跑 Plugin Verifier 二进�
 > ⚠️ **gradlew 必须保持可执行权限**(`100755`)。Windows 上改动后若误降权,Linux CI 会 `Permission denied`。用 `git update-index --chmod=+x gradlew` 恢复。
 
 团队成员用「方式一」安装后,发新版无需任何操作,IDE 自动检测更新。
+
+### 兼容范围维护(每周自动检测)
+
+兼容范围集中在 `gradle.properties`,是构建产物、Verifier 双端检查、发版索引三处的唯一真相源:
+
+```properties
+platformVersion=2026.2       # 编译目标(最低支持版,不随上限变化)
+pluginSinceBuild=262         # 最低支持构建号
+pluginUntilBuild=263.*       # 兼容上限;不设则未来 IDE 可直接安装但实验 API 可能崩
+verifierIdeVersions=2026.2,2026.3   # Verifier 目标:必须含最低支持版 + 最新支持版
+```
+
+GitHub Actions 每周一北京时间 10:00 自动运行 `Weekly IDEA Compatibility Watch`(`.github/workflows/compat-watch.yml`):
+
+- 查询 JetBrains 最新正式版 → 与 `pluginUntilBuild` 比对,无新版本则正常结束
+- 有新大版本:自动前移上限与 Verifier 目标 → 双端跑 `verifyPlugin` → 通过则开 PR `chore: 支持 IntelliJ IDEA <版本>`,失败则开 Issue(自动查重,且区分"真不兼容"与"网络/下载失败")
+- PR 合并前需人工:review 配置改动 → 更新本文档版本范围 → 补 CHANGELOG → 合并后打 tag 发版
+
+手动触发(如想提前验证 EAP,或演练流程):
+
+```bash
+gh workflow run compat-watch.yml --ref main
+gh workflow run compat-watch.yml --ref main -f override_latest=2027.1   # 指定版本号检查
+```
+
+> 自动化只覆盖二进制兼容(类/方法是否存在)。焦点接力、终端生命周期、MCP 反射连通性仍需在真实 IDE 里点一次 Pi 图标确认。
 
 ### 项目结构
 

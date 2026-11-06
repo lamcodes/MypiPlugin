@@ -12,8 +12,19 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.18.1"
 }
 
+// 版本与兼容范围统一来自 gradle.properties,这里只做一次解析,
+// 保证构建产物、Verifier 双端检查、发版索引三处不会各写一份而漂移。
+val pluginVersion = providers.gradleProperty("pluginVersion").get()
+val platformVersion = providers.gradleProperty("platformVersion").get()
+val pluginSinceBuild = providers.gradleProperty("pluginSinceBuild").get()
+val pluginUntilBuild = providers.gradleProperty("pluginUntilBuild").get()
+val verifierIdeVersions = providers.gradleProperty("verifierIdeVersions").get()
+    .split(',')
+    .map(String::trim)
+    .filter(String::isNotEmpty)
+
 group = "com.mypi"
-version = "0.2.3"
+version = pluginVersion
 
 // IntelliJ Platform 专用仓库(放行 IntelliJ 自有依赖与 bundled plugin 元数据)
 repositories {
@@ -26,9 +37,9 @@ repositories {
 dependencies {
     intellijPlatform {
         // 2025.3 起 IC 不再单独发布,统一用 intellijIdea()(平台建议);只用 platform + terminal API,与 IC 兼容
-        // 以最低支持版本 2026.2 为编译目标(官方建议:面向最老支持版本编译,避免误用更新平台 API);
+        // 以最低支持版本为编译目标(官方建议:面向最老支持版本编译,避免误用更新平台 API);
         // 2026.3(263) 的二进制兼容由 pluginVerification 的 verifyPlugin 双端检查覆盖。
-        intellijIdea("2026.2")
+        intellijIdea(platformVersion)
         // 依赖内置终端插件(Reworked Terminal 在此,提供 TerminalView 等)
         bundledPlugin("org.jetbrains.plugins.terminal")
         // 依赖 MCP Server 插件(2025.2+ 内置,提供 IDE 工具给 Pi 调用)
@@ -60,22 +71,21 @@ dependencies {
 
 intellijPlatform {
     pluginConfiguration {
-        version = "0.2.3"
+        version = pluginVersion
         ideaVersion {
             // 代码硬依赖 2026.2 才稳定提供的 Reworked Terminal 新 API(PiTerminalService 里
             // createSendTextBuilder / sendEndKeyBeforeText / TerminalToolWindowTabsManager 等 10 处调用);
-            // 低于 262 能装上但首次注入即 NoSuchMethodError,故从 262 起支持,并覆盖 2026.3 的 263 构建。
-            sinceBuild = "262"
-            untilBuild = "263.*"
+            // 低于 262 能装上但首次注入即 NoSuchMethodError,故从 262 起支持,上限见 gradle.properties。
+            sinceBuild = pluginSinceBuild
+            untilBuild = pluginUntilBuild
         }
     }
-    // 二进制兼容双端验证:插件声明 262..263.*,故对 IDEA Ultimate 2026.2 与 2026.3 各跑一次
-    // Plugin Verifier,捕获实验性终端 API 跨版本移除/签名变化(0.1.0 时代 253→262 就栽过 NoSuchMethodError)。
+    // 二进制兼容双端验证:对声明的首尾两端(最低支持版 + 最新支持版)各跑一次 Plugin Verifier,
+    // 捕获实验性终端 API 跨版本移除/签名变化(0.1.0 时代 253→262 就栽过 NoSuchMethodError)。
     pluginVerification {
         ides {
             // 2.18.1 的 DSL 是 create(type, version)(非旧文档的 ide(...))
-            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.2")
-            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.3")
+            verifierIdeVersions.forEach { create(IntelliJPlatformType.IntellijIdeaUltimate, it) }
         }
         // 插件名 MypiPlugin 含 "Plugin" 触发 Marketplace 命名模板规则;本插件经自定义仓库分发,
         // 名称是既有产品标识,故消音该规则而不是改名(Verifier 官方 mute 开关)
