@@ -4,7 +4,7 @@
     <name>MypiPlugin</name>
     <vendor>mypi</vendor>
     <description><![CDATA[
-        在 IntelliJ 内置终端跑 Pi coding agent,一键把选区定位注入 pi。<br/>
+        Run Pi coding agent inside IntelliJ IDEA terminal:在 IntelliJ 内置终端跑 Pi,一键把选区定位注入 pi。<br/>
         选中代码 → Ctrl+Alt+; → 定位串填入 pi 终端(只填不发送),焦点自动切到 pi 输入行,补问题回车即可。格式可在 Settings → Tools → Pi 切换(默认 @path:行号,可选 @path#L行号)。<br/>
         <br/>
         <strong>IDE MCP 集成(2025.2+):</strong>启动 Pi 时自动注入 IDEA MCP Server,让 Pi 获得 read_file、search_symbols、build_project、debug 等全套 IDE 工具,无需手动配置。可在 Settings → Tools → Pi 关闭。

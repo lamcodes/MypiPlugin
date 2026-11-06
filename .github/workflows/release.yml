@@ -28,6 +28,11 @@ jobs:
       - name: Build Plugin
         run: ./gradlew buildPlugin
 
+      # 二进制兼容关卡:对声明的 262..263.* 两端(2026.2/2026.3)跑 Plugin Verifier,
+      # 实验性终端 API 跨版本移除或签名变化在此 fail fast,不带上 Release
+      - name: Verify Plugin Compatibility
+        run: ./gradlew verifyPlugin
+
       - name: Extract Version
         id: version
         run: |
@@ -69,12 +74,28 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
+      # 从 patchPluginXml 产物提取 since/until-build —— 兼容范围唯一真相源在 build.gradle.kts,
+      # updatePlugins.xml 不再第二处硬编码,避免下次 IDE 大版本再漂移(本次 263 问题的同源风险)
+      - name: Extract idea-version from plugin.xml
+        id: ideaver
+        run: |
+          SINCE=$(sed -n 's/.*since-build="\([^"]*\)".*/\1/p' build/resources/main/META-INF/plugin.xml | head -1)
+          UNTIL=$(sed -n 's/.*until-build="\([^"]*\)".*/\1/p' build/resources/main/META-INF/plugin.xml | head -1)
+          if [ -z "$SINCE" ] || [ -z "$UNTIL" ]; then
+            echo "::error::未能从 build/resources/main/META-INF/plugin.xml 提取 since/until-build"
+            exit 1
+          fi
+          echo "since=$SINCE" >> $GITHUB_OUTPUT
+          echo "until=$UNTIL" >> $GITHUB_OUTPUT
+
       - name: Generate updatePlugins.xml
         env:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
           ZIP_NAME: ${{ steps.artifact.outputs.name }}
           DESC: ${{ steps.desc.outputs.body }}
+          SINCE: ${{ steps.ideaver.outputs.since }}
+          UNTIL: ${{ steps.ideaver.outputs.until }}
         run: |
           cat > updatePlugins.xml << EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -86,7 +107,7 @@ jobs:
                   <description><![CDATA[
           ${DESC}
                   ]]></description>
-                  <idea-version since-build="262" until-build="262.*"/>
+                  <idea-version since-build="${SINCE}" until-build="${UNTIL}"/>
               </plugin>
           </plugins>
           EOF

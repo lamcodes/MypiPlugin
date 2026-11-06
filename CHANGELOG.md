@@ -4,6 +4,15 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号语义遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.3] - 2026-11-06
+
+### Fixed
+- 修复插件兼容范围停留在 `262.*`、导致 IntelliJ IDEA 2026.3 拒绝安装或禁用插件的问题。
+
+### Changed
+- 新增 Plugin Verifier 双端检查(IJ Ultimate 2026.2 + 2026.3),发版流水线同步加入 `verifyPlugin` 关卡,防止实验性终端 API 跨版本移除再次逃逸。
+- 自定义插件仓库的兼容范围同步扩展到 `263.*`。
+
 ## [0.2.2] - 2026-08-20
 
 ### Fixed

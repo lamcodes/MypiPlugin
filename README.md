@@ -17,12 +17,12 @@ MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Rework
 
 | 依赖 | 版本 / 说明 |
 |---|---|
-| IntelliJ IDEA | **2026.2**(Community 或 Ultimate) |
+| IntelliJ IDEA | **2026.2–2026.3**(Community 或 Ultimate) |
 | JDK | 21(构建插件用) |
 | Pi CLI | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` |
 | LLM Provider | Pi 需配置 provider(如 `ANTHROPIC_API_KEY`)才能产生回复 |
 
-> ⚠️ **关于 IDE 版本**:插件依赖 IntelliJ 2026.2 才稳定提供的 Reworked Terminal 新 API(`TerminalView.createSendTextBuilder` / `sendEndKeyBeforeText` 等)。低于 2026.2 的版本能装上,但首次注入会因缺 API 而崩溃,请务必使用 2026.2+。
+> ⚠️ **关于 IDE 版本**:插件依赖 IntelliJ 2026.2 才稳定提供的 Reworked Terminal 新 API(`TerminalView.createSendTextBuilder` / `sendEndKeyBeforeText` 等),当前兼容 2026.2–2026.3。低于 2026.2 的版本缺少所需 API,高于 2026.3 的版本需等待兼容性验证。
 >
 > ⚠️ Pi 是独立的 coding agent CLI,本插件只负责 IDE 集成。Pi 的安装与 LLM 配置请参考 Pi 官方文档。
 
@@ -55,7 +55,7 @@ cd MypiPlugin
 ./gradlew buildPlugin
 ```
 
-构建产物:`build/distributions/MypiPlugin-0.1.0.zip`。
+构建产物:`build/distributions/MypiPlugin-0.2.3.zip`。
 
 ## 使用
 
@@ -123,7 +123,7 @@ cd MypiPlugin
 - `Ctrl+Alt+;` 是为避开中文输入法冲突刻意选的(原 `Ctrl+Alt+P` 会被 IME 拦截打 p,`Ctrl+Shift+*` 是输入法切换)。若仍冲突,可在 Settings → Keymap 里改绑 `Send Selection to Pi`
 
 **插件安装后不生效 / 注入时报错**
-- 确认 IDE 版本为 **2026.2+**(低于此版本缺 Reworked Terminal API)
+- 确认 IDE 版本为 **2026.2 或 2026.3**(低于此版本缺 Reworked Terminal API,更高版本尚未验证)
 - 重启 IDE
 
 ## 开发
@@ -133,11 +133,15 @@ cd MypiPlugin
 ```bash
 ./gradlew compileKotlin      # 仅编译
 ./gradlew buildPlugin        # 打卡产出 zip
+./gradlew verifyPlugin       # Plugin Verifier:对 IDEA 2026.2/2026.3 做二进制兼容检查
 ./gradlew prepareSandbox     # 构建并装入沙盒 IDE,便于直接运行调试
-./gradlew test               # 跑全部测试(Tier1 纯逻辑 + Tier2 平台)
+./gradlew runIde             # 启动沙盒 IDE 实测插件(手工冒烟入口)
+./gradlew test --tests "com.mypi.plugin.SelectionContextBuilderTest"   # Tier1 纯逻辑测试
 ```
 
 需要 JDK 21;项目自带 Gradle Wrapper,无需预装 Gradle。
+
+> ⚠️ **不要在 CLI 跑全量 `./gradlew test`**:Tier2 平台测试(`BasePlatformTestCase` 子类)会启动 IDEA sandbox,当前因协程库 debug metadata 冲突长时间卡死(详见 `tasks/lessons.md`)。Tier2 用 `runIde` 起真实 IDE 手工验证,或经 IDEA MCP 在真实 IDE 中执行。
 
 ### 发版流程
 
@@ -152,7 +156,7 @@ git tag vx.x.x
 git push origin main --tags
 ```
 
-CI 会自动:构建插件 → 从 `plugin.xml` 提取描述生成 `updatePlugins.xml`(单一真相源) → 从 `CHANGELOG.md` 读取对应版本段作为 Release 说明 → 创建 GitHub Release 并上传 zip 与索引。
+CI 会自动:构建插件 → 对 IDEA 2026.2/2026.3 跑 Plugin Verifier 二进制兼容检查(失败即中止发版) → 从 `plugin.xml` 提取描述生成 `updatePlugins.xml`(单一真相源) → 从 `CHANGELOG.md` 读取对应版本段作为 Release 说明 → 创建 GitHub Release 并上传 zip 与索引。
 
 > ⚠️ **CHANGELOG 是发版必需项**:CI 会从 `CHANGELOG.md` 提取 `## [版本号]` 段作为 Release body,找不到对应版本段会**构建失败**。打 tag 前务必先在 CHANGELOG.md 补写该版本段。
 
@@ -197,7 +201,7 @@ src/test/kotlin/com/mypi/plugin/         # 测试分层见下表
 
 ### 关键设计要点
 
-- **Experimental API 降级**:Reworked Terminal 的 tab/注入 API 在 2026.2 仍为 `@ApiStatus.Experimental`,所有调用处用 `runCatching` 包裹,失败时通过状态回调提示,绝不让插件崩溃。
+- **Experimental API 降级**:Reworked Terminal 的 tab/注入 API 在 2026.2–2026.3 仍可能变化,所有调用处用 `runCatching` 包裹,失败时通过状态回调提示,绝不让插件崩溃。
 - **单会话**:同一项目只持有一个 pi 终端;已开则聚焦,不重开。tab 被用户关闭时清引用并通知面板。
 - **每次点图标都触发**:`PiTerminalService` 的 `init` 订阅 `ToolWindowManagerListener.toolWindowShown`(不是只首次),解决「手动退出 pi 后再点图标无法重启」。
 - **线程模型**:终端 API 标注 `@RequiresEdt`,`openPi` 经 `invokeLater` 切 EDT 调用;`piTab`/`piView` 用 `@Volatile` 保证可见性。
