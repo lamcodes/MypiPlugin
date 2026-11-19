@@ -3,9 +3,9 @@ package com.mypi.plugin
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.LabeledComponent
+import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTextField
-import java.awt.BorderLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.JComboBox
@@ -13,7 +13,7 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
- * Settings → Tools → Pi 配置页:提供文本框编辑 pi 可执行路径 + MCP 集成开关。
+ * Settings → Tools → Pi 配置页:提供文本框编辑 pi 可执行路径 + 选区格式 + MCP/日志开关。
  *
  * - 空值表示走默认 PATH 查找(向后兼容)。
  * - 非空值则把该路径作为 pi 可执行文件直接启动。
@@ -25,9 +25,9 @@ import javax.swing.JPanel
 class PiConfigurable(private val project: Project) : Configurable {
 
     internal val pathField = JBTextField()
-    internal val mcpCheckBox = JBCheckBox("启用 IDE MCP 集成(让 Pi 能读写文件、搜索代码、构建项目、调试等)")
-    internal val mcpDedupCheckBox = JBCheckBox("开启去重检测(若 Pi 已通过 claude-code 等 import 获得 IDEA MCP,则跳过重复注入)")
-    internal val perfLoggingCheckBox = JBCheckBox("开启性能计时日志(各启动阶段耗时输出到 idea.log,用于排查启动慢)")
+    internal val mcpCheckBox = JBCheckBox("启用 IDE MCP 集成(让 Pi 能读写文件、搜索代码、构建项目、调试等)", true)
+    internal val mcpDedupCheckBox = JBCheckBox("开启去重检测(若 Pi 已通过 claude-code 等 import 获得 IDEA MCP,则跳过重复注入)", true)
+    internal val perfLoggingCheckBox = JBCheckBox("开启性能计时日志(各启动阶段耗时输出到 idea.log,用于排查启动慢)", false)
     internal val formatCombo = JComboBox(arrayOf("冒号风格 (@path:行号)", "GitHub 风格 (@path#L行号)"))
 
     override fun getDisplayName(): String = "Pi"
@@ -64,14 +64,14 @@ class PiConfigurable(private val project: Project) : Configurable {
         return panel
     }
 
-    /** 是否有未保存改动:文本框或复选框与持久化值不一致即为已修改。 */
+    /** 是否有未保存改动:文本框、下拉框或复选框与持久化值不一致即为已修改。 */
     override fun isModified(): Boolean {
         val settings = PiSettings.getInstance(project)
         return pathField.text != settings.piPath ||
             mcpCheckBox.isSelected != settings.mcpEnabled ||
             mcpDedupCheckBox.isSelected != settings.mcpDedupEnabled ||
             perfLoggingCheckBox.isSelected != settings.perfLoggingEnabled ||
-            formatCombo.selectedIndex != formatIndexFromSetting(settings.selectionFormat)
+            selectedFormat() != SelectionFormat.fromSetting(settings.selectionFormat)
     }
 
     /**
@@ -86,7 +86,7 @@ class PiConfigurable(private val project: Project) : Configurable {
         settings.mcpEnabled = mcpCheckBox.isSelected
         settings.mcpDedupEnabled = mcpDedupCheckBox.isSelected
         settings.perfLoggingEnabled = perfLoggingCheckBox.isSelected
-        settings.selectionFormat = if (formatCombo.selectedIndex == 0) "" else SelectionFormat.GITHUB_ANCHOR.name
+        settings.selectionFormat = selectedFormat().toSettingValue()
         pathField.text = trimmed
         mcpCheckBox.isSelected = settings.mcpEnabled
         mcpDedupCheckBox.isSelected = settings.mcpDedupEnabled
@@ -96,7 +96,7 @@ class PiConfigurable(private val project: Project) : Configurable {
         if (prevMcpEnabled && !settings.mcpEnabled) {
             val removed = PiMcpConfigService.getInstance(project).removeIdeMcpServer()
             if (removed) {
-                com.intellij.openapi.ui.Messages.showInfoMessage(
+                Messages.showInfoMessage(
                     "已清除 IDE MCP 配置,后续启动 Pi 不再连接 IDE MCP Server。",
                     "Pi"
                 )
@@ -104,18 +104,17 @@ class PiConfigurable(private val project: Project) : Configurable {
         }
     }
 
-    /** 重置:把持久化值载入文本框和复选框(进入配置页时调用)。 */
+    /** 重置:把持久化值载入文本框、下拉框和复选框(进入配置页时调用)。 */
     override fun reset() {
         val settings = PiSettings.getInstance(project)
         pathField.text = settings.piPath
         mcpCheckBox.isSelected = settings.mcpEnabled
         mcpDedupCheckBox.isSelected = settings.mcpDedupEnabled
         perfLoggingCheckBox.isSelected = settings.perfLoggingEnabled
-        formatCombo.selectedIndex = formatIndexFromSetting(settings.selectionFormat)
+        formatCombo.selectedIndex = SelectionFormat.fromSetting(settings.selectionFormat).ordinal
     }
 
-    /** 将 selectionFormat 持久化值映射为下拉框索引:空串/"COLON_LINE"→0, "GITHUB_ANCHOR"→1 */
-    private fun formatIndexFromSetting(raw: String): Int {
-        return if (raw == SelectionFormat.GITHUB_ANCHOR.name) 1 else 0
+    private fun selectedFormat(): SelectionFormat {
+        return SelectionFormat.entries.getOrElse(formatCombo.selectedIndex) { SelectionFormat.COLON_LINE }
     }
 }

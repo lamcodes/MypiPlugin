@@ -14,7 +14,7 @@ import com.intellij.openapi.vfs.VirtualFile
  * 快捷键动作(Ctrl+Alt+;):把当前选区或光标定位注入到 pi 终端(只填不发送)。
  *
  * 上下文判断(决策#7):
- *  - 有选区 → [SelectionContextBuilder.build] 产出定位串(选区起止行)。
+ *  - 有选区 → [SelectionContextBuilder.build] 产出定位串(选区起止行,修正整行末尾换行边界)。
  *  - 无选区 → [SelectionContextBuilder.build] 产出定位串(光标行,传 caretLine 两次)。
  *
  * 行锚点格式由设置项 [PiSettings.selectionFormat] 决定:COLON_LINE 产出 "@path:行号",
@@ -32,14 +32,21 @@ class SendSelectionAction : AnAction() {
         val path = resolvePath(project, file)
         val doc = editor.document
         val settings = PiSettings.getInstance(project)
-        val format = parseFormat(settings.selectionFormat)
+        val format = SelectionFormat.fromSetting(settings.selectionFormat)
         val selModel = editor.selectionModel
         val selectedText = selModel.selectedText
 
-        // 有选区发范围;无选区发单行(传 caretLine 两次,build 内部合并为单行号)
+        // 有选区发范围(处理整行选中末尾换行的边界);无选区发单行(传 caretLine 两次,build 内部合并为单行号)
         val text = if (!selectedText.isNullOrEmpty()) {
-            val startLine = doc.getLineNumber(selModel.selectionStart) + 1
-            val endLine = doc.getLineNumber(selModel.selectionEnd) + 1
+            val startLine0 = doc.getLineNumber(selModel.selectionStart)
+            val endLine0 = doc.getLineNumber(selModel.selectionEnd)
+            val (startLine, endLine) = SelectionContextBuilder.resolveLineRange(
+                selectionStart = selModel.selectionStart,
+                selectionEnd = selModel.selectionEnd,
+                startLine0 = startLine0,
+                endLine0 = endLine0,
+                endLineStartOffset = doc.getLineStartOffset(endLine0)
+            )
             SelectionContextBuilder.build(path, startLine, endLine, format)
         } else {
             val caretLine = doc.getLineNumber(editor.caretModel.offset) + 1
@@ -82,17 +89,4 @@ class SendSelectionAction : AnAction() {
 
     /** 将绝对路径统一为 Pi 可识别的正斜杠形式,避免 Windows 反斜杠干扰定位串解析。 */
     private fun normalizePath(path: String): String = path.replace('\\', '/')
-
-    /**
-     * 将持久化的格式字符串解析为 [SelectionFormat] 枚举。
-     * 空串或非法值回退到 [SelectionFormat.COLON_LINE]。
-     */
-    private fun parseFormat(raw: String): SelectionFormat {
-        if (raw.isEmpty()) return SelectionFormat.COLON_LINE
-        return try {
-            SelectionFormat.valueOf(raw)
-        } catch (_: IllegalArgumentException) {
-            SelectionFormat.COLON_LINE
-        }
-    }
 }

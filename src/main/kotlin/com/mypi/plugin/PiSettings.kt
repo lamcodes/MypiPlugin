@@ -8,11 +8,10 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 
 /**
- * Project 级持久化设置:保存用户配置的 pi 可执行路径和 MCP 集成开关。
+ * Project 级持久化设置:保存用户配置的 pi 可执行路径、选区格式和 MCP/日志开关。
  *
- * - piPath 非空:PiRpcProcess.start() 以其作为可执行路径,不再依赖 PATH。
- * - piPath 为空:回退到原有默认查找(Windows 走 cmd /c pi,其它平台直接 pi),
- *   保证老用户升级后行为不变。
+ * - piPath 非空:优先以该路径启动 pi,不再依赖 PATH。
+ * - piPath 为空:回退到系统 PATH 自动查找(Windows 优先 .exe > .cmd > .bat > pi,其它平台找 pi)。
  * - mcpEnabled:是否把 IDE MCP Server 注入 Pi,让 Pi 获得 read_file/search/build/debug 等工具。
  */
 @Service(Service.Level.PROJECT)

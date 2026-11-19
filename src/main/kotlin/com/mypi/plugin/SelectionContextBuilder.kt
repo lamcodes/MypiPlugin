@@ -8,7 +8,21 @@ package com.mypi.plugin
  */
 enum class SelectionFormat {
     COLON_LINE,
-    GITHUB_ANCHOR
+    GITHUB_ANCHOR;
+
+    /** 转换为持久化字符串（默认风格存空串以保持历史 XML 兼容）。 */
+    fun toSettingValue(): String = when (this) {
+        COLON_LINE -> ""
+        GITHUB_ANCHOR -> name
+    }
+
+    companion object {
+        /** 将持久化的格式字符串解析为 [SelectionFormat]；空串或非法值回退到 [COLON_LINE]。 */
+        fun fromSetting(raw: String?): SelectionFormat {
+            if (raw.isNullOrEmpty()) return COLON_LINE
+            return entries.firstOrNull { it.name == raw } ?: COLON_LINE
+        }
+    }
 }
 
 /**
@@ -25,6 +39,26 @@ enum class SelectionFormat {
  * 只发定位可保持 pi 输入行简洁;加 @/L 或冒号前缀让 pi 更可靠识别为文件引用。
  */
 object SelectionContextBuilder {
+
+    /**
+     * 将编辑器 0-based 偏移量区间转换为 1-based 起止行号。
+     * 当选区非空且结束位置恰好落在下一行第 0 列（即包含整行末尾换行符）时，
+     * 结束行回退到上一行，避免整行选中时多算一行（如只选第 10 行却产出 10-11）。
+     */
+    fun resolveLineRange(
+        selectionStart: Int,
+        selectionEnd: Int,
+        startLine0: Int,
+        endLine0: Int,
+        endLineStartOffset: Int
+    ): Pair<Int, Int> {
+        val adjustedEndLine0 = if (selectionEnd > selectionStart && endLineStartOffset == selectionEnd) {
+            (endLine0 - 1).coerceAtLeast(startLine0)
+        } else {
+            endLine0
+        }
+        return (startLine0 + 1) to (adjustedEndLine0 + 1)
+    }
 
     /**
      * 产出 pi 注入串。

@@ -13,9 +13,9 @@ import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.ui.content.Content
+import com.intellij.ui.content.ContentManager
 import com.intellij.ui.content.ContentManagerEvent
 import com.intellij.ui.content.ContentManagerListener
-import java.io.File
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -84,6 +84,9 @@ class PiTerminalService(val project: Project) : Disposable {
     /** 当前启动任务句柄,项目销毁时取消,避免后台任务继续操作已销毁项目。 */
     @Volatile private var openingTask: Future<*>? = null
 
+    /** 当前已注册的 Tab 关闭监听器绑定,用于在 Tab 关闭或服务销毁时及时解绑,防止监听器累积泄漏。 */
+    @Volatile private var closeListenerBinding: Pair<ContentManager, ContentManagerListener>? = null
+
     /**
      * 状态变化回调:文本状态("未启动"/"已就绪"/"启动失败:..."/"注入失败:...")。
      * 可能在 EDT 或终端线程触发,UI 侧需 invokeLater 切回 EDT 更新 Label。
@@ -124,12 +127,12 @@ class PiTerminalService(val project: Project) : Disposable {
             onResult("正在启动 Pi...")
             return
         }
+        notify("正在启动 pi...")
 
         try {
             openingTask = app.executeOnPooledThread {
                 if (project.isDisposed || Thread.currentThread().isInterrupted) {
-                    opening.set(false)
-                    openingTask = null
+                    clearOpeningState()
                     return@executeOnPooledThread
                 }
                 try {
@@ -137,8 +140,7 @@ class PiTerminalService(val project: Project) : Disposable {
                     val injectStart = if (perfLog) System.currentTimeMillis() else 0
                     injectMcpConfig()
                     if (project.isDisposed || Thread.currentThread().isInterrupted) {
-                        opening.set(false)
-                        openingTask = null
+                        clearOpeningState()
                         return@executeOnPooledThread
                     }
                     if (perfLog) {
@@ -152,8 +154,7 @@ class PiTerminalService(val project: Project) : Disposable {
                     }
 
                     app.invokeLater {
-                        opening.set(false)
-                        openingTask = null
+                        clearOpeningState()
                         if (project.isDisposed) {
                             onResult("项目已关闭")
                             return@invokeLater
@@ -200,14 +201,12 @@ class PiTerminalService(val project: Project) : Disposable {
                     }
                 } catch (e: Exception) {
                     if (project.isDisposed || Thread.currentThread().isInterrupted) {
-                        opening.set(false)
-                        openingTask = null
+                        clearOpeningState()
                         return@executeOnPooledThread
                     }
                     logger.warn("openPi: 后台预检失败", e)
                     app.invokeLater {
-                        opening.set(false)
-                        openingTask = null
+                        clearOpeningState()
                         if (project.isDisposed) {
                             return@invokeLater
                         }
@@ -218,8 +217,7 @@ class PiTerminalService(val project: Project) : Disposable {
                 }
             }
         } catch (e: Exception) {
-            opening.set(false)
-            openingTask = null
+            clearOpeningState()
             logger.warn("openPi: 无法提交后台任务", e)
             val msg = "启动失败:${e.message ?: e.toString()}"
             notify(msg)
@@ -289,38 +287,44 @@ class PiTerminalService(val project: Project) : Disposable {
 
     /**
      * 预检 pi 可执行:优先用 PiSettings 配的路径;空则扫 PATH。
-     * Windows 优先 .exe,其次 .cmd/.bat;其它平台找 "pi"。
+     * 具体解析逻辑下沉到 [PiExecutableResolver]（零平台依赖,支持 Tier1 单测）。
      */
     private fun resolvePiExecutable(): String? {
-        val configured = PiSettings.getInstance(project).piPath.trim()
-        if (configured.isNotEmpty() && File(configured).canExecute()) return configured
-        val pathEnv = System.getenv("PATH") ?: return null
-        val isWindows = System.getProperty("os.name", "").lowercase().startsWith("windows")
-        val candidates = if (isWindows) listOf("pi.exe", "pi.cmd", "pi.bat", "pi") else listOf("pi")
-        for (dir in pathEnv.split(File.pathSeparator)) {
-            if (dir.isBlank()) continue
-            for (name in candidates) {
-                val f = File(dir, name)
-                if (f.canExecute()) return f.absolutePath
-            }
-        }
-        return null
+        return PiExecutableResolver.resolve(PiSettings.getInstance(project).piPath)
     }
 
     /**
-     * 监听 Pi tab 关闭:用户关掉 pi 终端 tab 时清引用 + 通知面板"未启动"。
+     * 监听 Pi tab 关闭:用户关掉 pi 终端 tab 时解绑监听器、清引用并通知面板"未启动"。
      */
     private fun registerCloseListener(content: Content) {
+        detachCloseListener()
         val manager = content.manager ?: return
-        manager.addContentManagerListener(object : ContentManagerListener {
+        val listener = object : ContentManagerListener {
             override fun contentRemoved(event: ContentManagerEvent) {
                 if (event.content === content) {
-                    piTab = null
-                    piView = null
+                    detachCloseListener()
+                    if (piTab?.content === content) {
+                        piTab = null
+                        piView = null
+                    }
                     notify("未启动")
                 }
             }
-        })
+        }
+        manager.addContentManagerListener(listener)
+        closeListenerBinding = manager to listener
+    }
+
+    /** 解绑当前已注册的 Tab 关闭监听器,避免反复开关 Tab 导致监听器累积。 */
+    private fun detachCloseListener() {
+        val binding = closeListenerBinding ?: return
+        closeListenerBinding = null
+        runCatching { binding.first.removeContentManagerListener(binding.second) }
+    }
+
+    private fun clearOpeningState() {
+        openingTask = null
+        opening.set(false)
     }
 
     private fun notify(msg: String) {
@@ -328,10 +332,10 @@ class PiTerminalService(val project: Project) : Disposable {
     }
 
     override fun dispose() {
-        // 先取消后台预检,再清理终端引用,避免项目销毁后继续写用户级配置或回调 UI。
+        // 先取消后台预检,再解绑监听器并清理终端引用,避免项目销毁后继续写用户级配置或回调 UI。
         openingTask?.cancel(true)
-        openingTask = null
-        opening.set(false)
+        clearOpeningState()
+        detachCloseListener()
         val tab = piTab
         piTab = null
         piView = null

@@ -117,4 +117,97 @@ class SelectionContextBuilderTest {
             SelectionContextBuilder.build("src/test/kotlin/App.kt", 7, 7, SelectionFormat.GITHUB_ANCHOR)
         )
     }
+
+    // ── SelectionFormat 持久化解析与回退 ──
+
+    @Test
+    fun `SelectionFormat fromSetting 空串和非法值回退 COLON_LINE`() {
+        assertEquals(SelectionFormat.COLON_LINE, SelectionFormat.fromSetting(null))
+        assertEquals(SelectionFormat.COLON_LINE, SelectionFormat.fromSetting(""))
+        assertEquals(SelectionFormat.COLON_LINE, SelectionFormat.fromSetting("COLON_LINE"))
+        assertEquals(SelectionFormat.COLON_LINE, SelectionFormat.fromSetting("UNKNOWN_FORMAT"))
+        assertEquals(SelectionFormat.GITHUB_ANCHOR, SelectionFormat.fromSetting("GITHUB_ANCHOR"))
+    }
+
+    @Test
+    fun `SelectionFormat toSettingValue 保持历史 XML 兼容`() {
+        assertEquals("", SelectionFormat.COLON_LINE.toSettingValue())
+        assertEquals("GITHUB_ANCHOR", SelectionFormat.GITHUB_ANCHOR.toSettingValue())
+    }
+
+    // ── resolveLineRange 整行末尾换行边界 ──
+
+    @Test
+    fun `resolveLineRange 普通行内选区保持原起止行`() {
+        // 第 1 行(0-based: 0) 偏移 0..3，未跨到下一行行首
+        assertEquals(
+            1 to 1,
+            SelectionContextBuilder.resolveLineRange(
+                selectionStart = 0,
+                selectionEnd = 3,
+                startLine0 = 0,
+                endLine0 = 0,
+                endLineStartOffset = 0
+            )
+        )
+    }
+
+    @Test
+    fun `resolveLineRange 整行选中含末尾换行时不把下一行算入`() {
+        // 选中第 10 行整行含 '\n'，selectionEnd 落在第 11 行(0-based: 10)第 0 列
+        assertEquals(
+            10 to 10,
+            SelectionContextBuilder.resolveLineRange(
+                selectionStart = 100,
+                selectionEnd = 120,
+                startLine0 = 9,
+                endLine0 = 10,
+                endLineStartOffset = 120
+            )
+        )
+    }
+
+    @Test
+    fun `resolveLineRange 多行整行选中含末尾换行时回退一行`() {
+        // 选中第 10-12 行整行含末尾 '\n'，selectionEnd 落在第 13 行(0-based: 12)第 0 列
+        assertEquals(
+            10 to 12,
+            SelectionContextBuilder.resolveLineRange(
+                selectionStart = 100,
+                selectionEnd = 180,
+                startLine0 = 9,
+                endLine0 = 12,
+                endLineStartOffset = 180
+            )
+        )
+    }
+
+    @Test
+    fun `resolveLineRange 跨行且末行有实际选中字符时不回退`() {
+        // 选中第 10 行到第 11 行第 2 列（endLineStartOffset=120 != selectionEnd=122）
+        assertEquals(
+            10 to 11,
+            SelectionContextBuilder.resolveLineRange(
+                selectionStart = 100,
+                selectionEnd = 122,
+                startLine0 = 9,
+                endLine0 = 10,
+                endLineStartOffset = 120
+            )
+        )
+    }
+
+    @Test
+    fun `resolveLineRange 空选区在行首时不误回退`() {
+        assertEquals(
+            5 to 5,
+            SelectionContextBuilder.resolveLineRange(
+                selectionStart = 40,
+                selectionEnd = 40,
+                startLine0 = 4,
+                endLine0 = 4,
+                endLineStartOffset = 40
+            )
+        )
+    }
 }
