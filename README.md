@@ -57,7 +57,7 @@ cd MypiPlugin
 ./gradlew buildPlugin
 ```
 
-构建产物:`build/distributions/MypiPlugin-0.2.3.zip`。
+构建产物:`build/distributions/MypiPlugin-0.2.4.zip`。
 
 ## 使用
 

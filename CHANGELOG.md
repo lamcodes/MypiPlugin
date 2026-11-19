@@ -4,6 +4,19 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号语义遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.2.4] - 2026-11-20
+
+### Fixed
+- 修复整行选中且包含末尾换行符时，注入定位串结束行号多算一行的问题（如仅选中第 10 行却产出 `10-11`）。
+- 修复反复关闭并重启 Pi 终端 Tab 时 `ContentManagerListener` 未解绑导致的监听器累积问题，并在重启时及时更新面板状态提示。
+- 修复 `Pi` 可执行路径校验把同名目录误判为可执行文件的问题，以及 MCP 去重检测中畸形 URL 误匹配的问题。
+- 对齐 `Settings → Tools → Pi` 配置页复选框初始状态与 `PiSettings` 默认值，避免未 `reset` 时意外关闭 MCP 集成。
+
+### Changed
+- 抽离零平台依赖纯逻辑层（`PiMcpConfigStore`、`PiExecutableResolver`、`SelectionContextBuilder.resolveLineRange` / `SelectionFormat.fromSetting`），并将 Tier1 单元测试扩充至 41 个用例。
+- 新增每周 IntelliJ IDEA 兼容自动巡检与升级 PR 工作流（`compat-watch.yml`）。
+- 建立项目文档知识库（`docs/` 导航、领域词汇表、架构说明、开发与发布指南与 ADR），并清理已完成的历史计划草稿。
+
 ## [0.2.3] - 2026-11-06
 
 ### Fixed

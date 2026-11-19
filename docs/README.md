@@ -1,6 +1,6 @@
 # MypiPlugin 文档导航
 
-> 核对：2026-11-20 0.2.3
+> 核对：2026-11-20 0.2.4
 
 本目录存放 MypiPlugin 的稳定项目知识；面向用户的安装与快速上手见根目录 [README.md](../README.md)，版本变更见 [CHANGELOG.md](../CHANGELOG.md)。
 
