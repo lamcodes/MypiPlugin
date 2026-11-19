@@ -4,6 +4,8 @@
 
 MypiPlugin 是一个 IntelliJ Platform 插件,复用 IDE **内置终端**(Reworked Terminal)跑 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent。**选中代码 → `Ctrl+Alt+;` → 定位串注入到 pi 输入行(只填不发送)**,焦点自动切到 pi 终端,你补一句问题回车即可,全程不离开 IDE。启动 Pi 时,在 MCP 可用且开关开启的情况下自动注入 IDEA MCP Server,让 Pi 直接拿到 IDE 的读文件、搜符号、构建、调试等工具。
 
+> 📚 **项目文档知识库**：架构说明、领域词汇表、开发与发布指南及架构决策记录（ADR）见 [docs/README.md](docs/README.md)。
+
 ## 特性
 
 - 🚀 **一键注入选区定位**:`Ctrl+Alt+;` 把当前选区/光标位置填入 pi 终端输入行(**只填不发送**,留给你补问题);格式可在 Settings → Tools → Pi 切换(默认冒号风格 `@path:行号`,也可选 GitHub 风格 `@path#L行号`)
@@ -195,11 +197,13 @@ gh workflow run compat-watch.yml --ref main -f override_latest=2027.1   # 指定
 ```
 src/main/kotlin/com/mypi/plugin/
 ├── PiTerminalService.kt        # 核心:用 Reworked Terminal 跑 pi + 选区注入(单会话、焦点接力、Experimental API 降级)
-├── PiMcpConfigService.kt       # 把 IDEA MCP Server 注入 Pi 的 mcp.json(反射访问、claude-code 去重、原子写入)
+├── PiExecutableResolver.kt     # Pi 可执行文件解析(纯逻辑,零平台依赖):自定义路径与 PATH 扫描
+├── PiMcpConfigService.kt       # IDE MCP Server 注入编排(反射获取 URL、配置开关、全局写锁)
+├── PiMcpConfigStore.kt         # mcp.json 原子读写、损坏保护与 claude-code 去重(纯逻辑,零平台依赖)
 ├── PiToolWindowFactory.kt      # 右侧 Pi 工具窗工厂(状态 Label 兜底,启动逻辑在 Service)
 ├── SendSelectionAction.kt      # Ctrl+Alt+; 注入动作(有选区发范围,无选区发单行定位)
-├── SelectionContextBuilder.kt  # 选区 → 定位串构造(纯逻辑,零平台依赖);支持 COLON_LINE / GITHUB_ANCHOR 两种行锚点格式
-├── PiSettings.kt               # 持久化设置:pi 路径 + MCP/去重/性能日志开关(PersistentStateComponent)
+├── SelectionContextBuilder.kt  # 选区行号边界修正 + 定位串构造(纯逻辑,零平台依赖);支持 COLON_LINE / GITHUB_ANCHOR
+├── PiSettings.kt               # 持久化设置:pi 路径 + 选区格式 + MCP/去重/性能日志开关(PersistentStateComponent)
 └── PiConfigurable.kt           # Settings → Tools → Pi 配置页(路径框 + 格式下拉框 + 3 个开关)
 src/main/resources/META-INF/plugin.xml   # 插件声明(ToolWindow / Action / Configurable + 3 个 depends)
 src/test/kotlin/com/mypi/plugin/         # 测试分层见下表
@@ -209,13 +213,15 @@ src/test/kotlin/com/mypi/plugin/         # 测试分层见下表
 
 | 文件 | 层级 | 覆盖 |
 |---|---|---|
-| `SelectionContextBuilderTest` | Tier1 纯逻辑(JUnit5) | 定位串拼接,覆盖 COLON_LINE / GITHUB_ANCHOR 双格式及 Windows 绝对路径(15 用例) |
-| `PiSettingsStateTest` | Tier1 纯逻辑(JUnit5) | `piPath` 持久化状态(4 用例) |
+| `SelectionContextBuilderTest` | Tier1 纯逻辑(JUnit5) | 定位串拼接(双格式/Windows 路径)、`SelectionFormat` 解析与整行换行边界(22 用例) |
+| `PiSettingsStateTest` | Tier1 纯逻辑(JUnit5) | 全部 5 项持久化字段默认值与 `loadState` 拷贝契约(4 用例) |
+| `PiMcpConfigStoreTest` | Tier1 纯逻辑(JUnit5) | `mcp.json` 原子读写、损坏保护、移除清理、`claude-code` 去重与 URL 规范化(10 用例) |
+| `PiExecutableResolverTest` | Tier1 纯逻辑(JUnit5) | 自定义路径优先、目录过滤、Windows/Unix `PATH` 扫描顺序(5 用例) |
 | `SendSelectionActionTest` | Tier2 平台(`BasePlatformTestCase`) | `update` 启用逻辑(3 用例) |
 | `PiConfigurableTest` | Tier2 平台 | 配置页与 `piPath` roundtrip(3 用例) |
 | `PiSettingsPlatformTest` | Tier2 平台 | PiSettings 单例与 `piPath` 读写(3 用例) |
 
-`PiTerminalService` / `PiMcpConfigService` / `PiToolWindowFactory` 暂未覆盖;`PiSettings` 的 MCP/去重/性能开关及 `PiConfigurable` 的对应 roundtrip 也暂未覆盖(终端 API + EDT + 反射 + 文件 IO 难以在平台测试可靠复现,依赖手动验证)。
+`PiTerminalService` / `PiMcpConfigService`(反射与锁编排)/ `PiToolWindowFactory` 的平台交互层仍依赖真实 IDE 手动验证;纯文件/配置/路径解析逻辑已下沉至 Tier1 单元测试覆盖。
 
 ### 工作原理
 
@@ -237,7 +243,7 @@ src/test/kotlin/com/mypi/plugin/         # 测试分层见下表
 - **只填不发送**:注入定位串后需用户手动补问题 + 回车(刻意设计,保持 pi 输入简洁)
 - **不收集 pi 回复**:回复直接显示在 pi 终端内,插件不在侧栏做二次展示
 - **单会话**:一个项目一个 pi 终端,暂不支持多会话/历史保留
-- **平台服务与 MCP 配置未完全覆盖测试**:`PiTerminalService` / `PiMcpConfigService` / `PiToolWindowFactory` 涉及终端 API + EDT + 反射 + 文件 IO,难以在平台测试可靠复现,依赖手动验证;`SelectionContextBuilder` / `SendSelectionAction.update` 与 `piPath` 配置层已覆盖,但 MCP/去重/性能开关仍未覆盖(见上「测试分层」)
+- **平台交互层依赖手动验证**:`PiTerminalService` / `PiMcpConfigService`(反射与锁编排)/ `PiToolWindowFactory` 的终端 API + EDT + 反射交互难以在平台测试可靠复现,依赖手动验证;纯文件/JSON 存储(`PiMcpConfigStore`)、可执行路径解析(`PiExecutableResolver`)、选区构造与配置状态已由 Tier1 覆盖(见上「测试分层」)
 
 ## 项目状态
 
