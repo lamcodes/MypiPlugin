@@ -18,3 +18,7 @@ out/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+
+# ===== 临时过程产物与本地工具目录 =====
+tasks/
+.superpowers/
